@@ -242,7 +242,7 @@ class TaskRepository {
   }
 
   // Calculate current streak for a green task
-  Future<int> calculateTaskStreak(String groupId, DateTime upToDate) async {
+  Future<({int streak, int antiStreak})> calculateTaskStreak(String groupId, DateTime upToDate) async {
     final normalizedDate = DateTime(upToDate.year, upToDate.month, upToDate.day);
     
     final snapshot = await _tasksCollection
@@ -260,25 +260,61 @@ class TaskRepository {
     tasks.sort((a, b) => (b['date'] as DateTime).compareTo(a['date'] as DateTime));
 
     int streak = 0;
-    bool isFirst = true;
+    int antiStreak = 0;
+    int state = 0; 
+    
+    DateTime? expectedDate;
 
     for (var t in tasks) {
       final taskDate = t['date'] as DateTime;
       final taskDay = DateTime(taskDate.year, taskDate.month, taskDate.day);
       if (taskDay.isAfter(normalizedDate)) continue;
+      
+      final isCompleted = t['isCompleted'] as bool;
 
-      if (isFirst) {
-        isFirst = false;
-        if (t['isCompleted'] as bool) streak++;
-      } else {
-        if (t['isCompleted'] as bool) {
+      if (expectedDate != null) {
+        final diff = expectedDate.difference(taskDay).inDays;
+        if (diff > 0) {
+          if (state == 0) {
+            state = 2;
+            antiStreak += diff;
+          } else if (state == 1) {
+            break;
+          } else if (state == 2) {
+            antiStreak += diff;
+          }
+        }
+      }
+      expectedDate = taskDay.subtract(const Duration(days: 1));
+
+      if (state == 0) {
+        if (taskDay == normalizedDate && !isCompleted) {
+          // Neutral today
+        } else {
+          if (isCompleted) {
+            state = 1;
+            streak++;
+          } else {
+            state = 2;
+            antiStreak++;
+          }
+        }
+      } else if (state == 1) {
+        if (isCompleted) {
           streak++;
+        } else {
+          break;
+        }
+      } else if (state == 2) {
+        if (!isCompleted) {
+          antiStreak++;
         } else {
           break;
         }
       }
     }
-    return streak;
+    
+    return (streak: streak, antiStreak: antiStreak);
   }
 
   // Get streaks for all green tasks
@@ -591,14 +627,32 @@ class TaskRepository {
         int maxStreak = 0;
         int tempStreak = 0;
         
-        bool isFirst = true;
+        int state = 0;
+        DateTime? expectedDate;
 
         for (final t in tasks) {
           final isCompleted = t['isCompleted'] as bool;
-          if (isFirst) {
-            isFirst = false;
-            if (isCompleted) currentStreak++;
-          } else {
+          final taskDate = t['date'] as DateTime;
+          final taskDay = DateTime(taskDate.year, taskDate.month, taskDate.day);
+          
+          if (expectedDate != null) {
+            final diff = expectedDate.difference(taskDay).inDays;
+            if (diff > 0) break;
+          }
+          expectedDate = taskDay.subtract(const Duration(days: 1));
+
+          if (state == 0) {
+            if (taskDay == today && !isCompleted) {
+              // Neutral today
+            } else {
+              if (isCompleted) {
+                state = 1;
+                currentStreak++;
+              } else {
+                break;
+              }
+            }
+          } else if (state == 1) {
             if (isCompleted) {
               currentStreak++;
             } else {
@@ -607,8 +661,19 @@ class TaskRepository {
           }
         }
 
+        DateTime? maxExpectedDate;
         for (final t in tasks.reversed) {
-          if (t['isCompleted'] as bool) {
+          final isCompleted = t['isCompleted'] as bool;
+          final taskDate = t['date'] as DateTime;
+          final taskDay = DateTime(taskDate.year, taskDate.month, taskDate.day);
+          
+          if (maxExpectedDate != null) {
+            final diff = taskDay.difference(maxExpectedDate).inDays;
+            if (diff > 0) tempStreak = 0;
+          }
+          maxExpectedDate = taskDay.add(const Duration(days: 1));
+
+          if (isCompleted) {
             tempStreak++;
             if (tempStreak > maxStreak) {
               maxStreak = tempStreak;

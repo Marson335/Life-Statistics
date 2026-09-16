@@ -28,7 +28,7 @@ class _MobileScaffold extends StatelessWidget {
     final location = GoRouterState.of(context).matchedLocation;
     if (location == '/') return 0;
     if (location == '/statistics') return 1;
-    if (location == '/mindset') return 2;
+    if (location == '/calories') return 2;
     if (location == '/settings') return 3;
     return 0;
   }
@@ -49,14 +49,14 @@ class _MobileScaffold extends StatelessWidget {
             switch (index) {
               case 0: context.go('/'); break;
               case 1: context.go('/statistics'); break;
-              case 2: context.go('/mindset'); break;
+              case 2: context.go('/calories'); break;
               case 3: context.go('/settings'); break;
             }
           },
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.today_rounded), label: 'Сьогодні'),
             BottomNavigationBarItem(icon: Icon(Icons.bar_chart_rounded), label: 'Статистика'),
-            BottomNavigationBarItem(icon: Icon(Icons.self_improvement_rounded), label: 'Мислення'),
+            BottomNavigationBarItem(icon: Icon(Icons.local_fire_department_rounded), label: 'Калорії'),
             BottomNavigationBarItem(icon: Icon(Icons.settings_rounded), label: 'Налаштування'),
           ],
         ),
@@ -74,7 +74,7 @@ class _DesktopScaffold extends StatelessWidget {
     final location = GoRouterState.of(context).matchedLocation;
     if (location == '/') return 0;
     if (location == '/statistics') return 1;
-    if (location == '/mindset') return 2;
+    if (location == '/calories') return 2;
     if (location == '/settings') return 3;
     return 0;
   }
@@ -99,7 +99,7 @@ class _DesktopScaffold extends StatelessWidget {
                 switch (index) {
                   case 0: context.go('/'); break;
                   case 1: context.go('/statistics'); break;
-                  case 2: context.go('/mindset'); break;
+                  case 2: context.go('/calories'); break;
                   case 3: context.go('/settings'); break;
                 }
               },
@@ -135,7 +135,7 @@ class _DesktopScaffold extends StatelessWidget {
               destinations: const [
                 NavigationRailDestination(icon: Icon(Icons.today_rounded), label: Text('Сьогодні')),
                 NavigationRailDestination(icon: Icon(Icons.bar_chart_rounded), label: Text('Статистика')),
-                NavigationRailDestination(icon: Icon(Icons.self_improvement_rounded), label: Text('Mindset')),
+                NavigationRailDestination(icon: Icon(Icons.local_fire_department_rounded), label: Text('Калорії')),
                 NavigationRailDestination(icon: Icon(Icons.settings_rounded), label: Text('Налаштування')),
               ],
             ),
@@ -146,4 +146,5 @@ class _DesktopScaffold extends StatelessWidget {
     );
   }
 }
+
 

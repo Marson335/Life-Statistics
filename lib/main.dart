@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -11,7 +11,8 @@ import 'core/services/notification_service.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/tasks/presentation/screens/today_screen.dart';
 import 'features/statistics/presentation/screens/statistics_screen.dart';
-import 'features/mindset/presentation/screens/mindset_screen.dart';
+import 'features/calories/presentation/screens/calories_screen.dart';
+import 'features/settings/presentation/screens/settings_screen.dart';
 import 'shared/widgets/main_scaffold.dart';
 
 void main() async {
@@ -41,12 +42,11 @@ final _router = GoRouter(
             path: '/statistics',
             builder: (ctx, state) => const StatisticsScreen()),
         GoRoute(
-            path: '/mindset',
-            builder: (ctx, state) => const MindsetScreen()),
+            path: '/calories',
+            builder: (ctx, state) => const CaloriesScreen()),
         GoRoute(
             path: '/settings',
-            builder: (ctx, state) => const _PlaceholderScreen(
-                title: 'Налаштування', icon: Icons.settings_rounded)),
+            builder: (ctx, state) => const SettingsScreen()),
       ],
     ),
   ],
@@ -109,4 +109,5 @@ class _PlaceholderScreen extends StatelessWidget {
     );
   }
 }
+
 

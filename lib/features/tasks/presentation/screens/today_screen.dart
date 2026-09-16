@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../shared/models/models.dart';
 import '../../../../core/theme/app_theme.dart';
@@ -19,7 +19,7 @@ final taskRepositoryProvider = Provider<TaskRepository>((ref) => TaskRepository(
 
 typedef StreakArgs = ({String groupId, DateTime date});
 
-final taskStreakProvider = FutureProvider.family<int, StreakArgs>((ref, args) async {
+final taskStreakProvider = FutureProvider.family<({int streak, int antiStreak}), StreakArgs>((ref, args) async {
   final repo = ref.watch(taskRepositoryProvider);
   return repo.calculateTaskStreak(args.groupId, args.date);
 });
@@ -821,6 +821,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
             }
             // Request permissions before opening time picker
             await NotificationService().requestPermissions();
+            if (!mounted) return;
             
             final time = await showTimePicker(
               context: context,
@@ -1044,40 +1045,52 @@ class StreakBadge extends ConsumerWidget {
     final streakAsync = ref.watch(taskStreakProvider((groupId: groupId, date: date)));
     
     return streakAsync.when(
-      data: (streak) {
-        if (streak == 0) return const SizedBox.shrink();
+      data: (data) {
+        final streak = data.streak;
+        final antiStreak = data.antiStreak;
+
+        if (streak == 0 && antiStreak == 0) return const SizedBox.shrink();
         
-        final double size = 16.0 + (streak * 0.5).clamp(0.0, 12.0);
-        
-        return Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.local_fire_department_rounded, color: Colors.orange, size: size),
-            const SizedBox(width: 2),
-            Text(
-              '$streak',
-              style: TextStyle(
-                color: Colors.orange,
-                fontWeight: FontWeight.bold,
-                fontSize: size * 0.6,
+        if (streak > 0) {
+          final double size = 16.0 + (streak * 0.5).clamp(0.0, 12.0);
+          
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.local_fire_department_rounded, color: Colors.orange, size: size),
+              const SizedBox(width: 2),
+              Text(
+                '$streak',
+                style: TextStyle(
+                  color: Colors.orange,
+                  fontWeight: FontWeight.bold,
+                  fontSize: size * 0.6,
+                ),
               ),
-            ),
-            const SizedBox(width: 8),
-          ],
-        );
+            ],
+          );
+        } else {
+          final double size = 16.0 + (antiStreak * 0.5).clamp(0.0, 12.0);
+          
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.ac_unit_rounded, color: Colors.lightBlueAccent, size: size),
+              const SizedBox(width: 2),
+              Text(
+                '$antiStreak',
+                style: TextStyle(
+                  color: Colors.lightBlueAccent,
+                  fontWeight: FontWeight.bold,
+                  fontSize: size * 0.6,
+                ),
+              ),
+            ],
+          );
+        }
       },
       loading: () => const SizedBox.shrink(),
       error: (_, __) => const SizedBox.shrink(),
     );
   }
-
 }
-
-
-
-
-
-
-
-
-
