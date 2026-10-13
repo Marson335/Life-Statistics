@@ -1,4 +1,4 @@
-﻿class UserSettings {
+class UserSettings {
   final int age;
   final double weight;
   final double height;
@@ -11,6 +11,10 @@
   final int targetFats;
   final int targetCarbs;
 
+  final List<String> expenseTags;
+  final List<String> incomeTags;
+  final String? geminiApiKey;
+
   UserSettings({
     required this.age,
     required this.weight,
@@ -21,6 +25,9 @@
     required this.targetProtein,
     required this.targetFats,
     required this.targetCarbs,
+    required this.expenseTags,
+    required this.incomeTags,
+    this.geminiApiKey,
   });
 
   factory UserSettings.defaultSettings() {
@@ -34,6 +41,9 @@
       targetProtein: 125,
       targetFats: 83,
       targetCarbs: 312,
+      expenseTags: ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше'],
+      incomeTags: ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'],
+      geminiApiKey: null,
     );
   }
 
@@ -48,6 +58,9 @@
       'targetProtein': targetProtein,
       'targetFats': targetFats,
       'targetCarbs': targetCarbs,
+      'expenseTags': expenseTags,
+      'incomeTags': incomeTags,
+      'geminiApiKey': geminiApiKey,
     };
   }
 
@@ -62,6 +75,9 @@
       targetProtein: map['targetProtein']?.toInt() ?? 125,
       targetFats: map['targetFats']?.toInt() ?? 83,
       targetCarbs: map['targetCarbs']?.toInt() ?? 312,
+      expenseTags: (map['expenseTags'] as List?)?.cast<String>() ?? ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше'],
+      incomeTags: (map['incomeTags'] as List?)?.cast<String>() ?? ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'],
+      geminiApiKey: map['geminiApiKey'] as String?,
     );
   }
 
@@ -75,6 +91,9 @@
     int? targetProtein,
     int? targetFats,
     int? targetCarbs,
+    List<String>? expenseTags,
+    List<String>? incomeTags,
+    String? geminiApiKey,
   }) {
     return UserSettings(
       age: age ?? this.age,
@@ -86,6 +105,9 @@
       targetProtein: targetProtein ?? this.targetProtein,
       targetFats: targetFats ?? this.targetFats,
       targetCarbs: targetCarbs ?? this.targetCarbs,
+      expenseTags: expenseTags ?? this.expenseTags,
+      incomeTags: incomeTags ?? this.incomeTags,
+      geminiApiKey: geminiApiKey ?? this.geminiApiKey,
     );
   }
 }

@@ -46,6 +46,10 @@ dependencies:
   equatable: ^2.0.5
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0
+  google_generative_ai: ^0.4.7
+  image_picker: ^1.2.3
+  url_launcher: ^6.3.3
+  notification_listener_service: ^1.0.0
 
 dev_dependencies:
   flutter_test:

@@ -48,12 +48,20 @@ class CaloriesRepository {
     });
   }
 
-  Future<void> updateDailyMacros(DateTime date, {int calories = 0, int protein = 0, int fats = 0, int carbs = 0}) async {
+  Future<void> updateDailyMacros(
+    DateTime date, {
+    int calories = 0,
+    int protein = 0,
+    int fats = 0,
+    int carbs = 0,
+    MealItem? meal,
+  }) async {
     final dateStr = _formatDate(date);
     final docRef = _macrosCollection.doc(dateStr);
     
     await _firestore.runTransaction((transaction) async {
       final snapshot = await transaction.get(docRef);
+      final mealList = meal != null ? [meal.toMap()] : [];
       
       if (!snapshot.exists) {
         transaction.set(docRef, {
@@ -61,16 +69,49 @@ class CaloriesRepository {
           'protein': protein,
           'fats': fats,
           'carbs': carbs,
+          'meals': mealList,
         });
       } else {
         final current = snapshot.data() as Map<String, dynamic>;
+        final currentMeals = List<dynamic>.from(current['meals'] ?? []);
+        if (meal != null) {
+          currentMeals.add(meal.toMap());
+        }
         transaction.update(docRef, {
           'calories': (current['calories'] ?? 0) + calories,
           'protein': (current['protein'] ?? 0) + protein,
           'fats': (current['fats'] ?? 0) + fats,
           'carbs': (current['carbs'] ?? 0) + carbs,
+          'meals': currentMeals,
         });
       }
+    });
+  }
+
+  Future<void> deleteMeal(DateTime date, MealItem meal) async {
+    final dateStr = _formatDate(date);
+    final docRef = _macrosCollection.doc(dateStr);
+    
+    await _firestore.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+      if (!snapshot.exists) return;
+      
+      final current = snapshot.data() as Map<String, dynamic>;
+      final currentMeals = List<dynamic>.from(current['meals'] ?? []);
+      final updatedMeals = currentMeals.where((m) => m['id'] != meal.id).toList();
+
+      final newCalories = ((current['calories'] ?? 0) - meal.calories).clamp(0, 999999);
+      final newProtein = ((current['protein'] ?? 0) - meal.protein).clamp(0, 999999);
+      final newFats = ((current['fats'] ?? 0) - meal.fats).clamp(0, 999999);
+      final newCarbs = ((current['carbs'] ?? 0) - meal.carbs).clamp(0, 999999);
+
+      transaction.update(docRef, {
+        'calories': newCalories,
+        'protein': newProtein,
+        'fats': newFats,
+        'carbs': newCarbs,
+        'meals': updatedMeals,
+      });
     });
   }
 }

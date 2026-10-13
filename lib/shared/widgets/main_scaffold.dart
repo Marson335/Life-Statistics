@@ -1,21 +1,53 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import '../../../core/theme/app_theme.dart';
 
-class MainScaffold extends StatelessWidget {
+import '../../features/tasks/data/notification_expense_service.dart';
+import '../../../core/services/notification_service.dart';
+import '../../features/tasks/data/task_repository.dart';
+
+class MainScaffold extends StatefulWidget {
   final Widget child;
   const MainScaffold({super.key, required this.child});
+
+  @override
+  State<MainScaffold> createState() => _MainScaffoldState();
+}
+
+class _MainScaffoldState extends State<MainScaffold> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationExpenseService().startListening();
+      NotificationService().rescheduleAllTaskReminders(TaskRepository());
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      NotificationExpenseService().scanActiveNotifications();
+    }
+  }
 
   bool get _isDesktop => !kIsWeb && Platform.isWindows;
 
   @override
   Widget build(BuildContext context) {
     if (_isDesktop) {
-      return _DesktopScaffold(child: child);
+      return _DesktopScaffold(child: widget.child);
     }
-    return _MobileScaffold(child: child);
+    return _MobileScaffold(child: widget.child);
   }
 }
 

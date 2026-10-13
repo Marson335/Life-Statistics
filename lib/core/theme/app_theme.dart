@@ -1,4 +1,4 @@
-﻿import 'package:flutter/material.dart';
+import 'package:flutter/material.dart';
 
 class AppColors {
   // Task type colors
@@ -168,6 +168,9 @@ class AppTheme {
       case 'TaskType.yellow':
       case 'yellow':
         return AppColors.yellowTask;
+      case 'TaskType.finance':
+      case 'finance':
+        return AppColors.accent;
       default:
         return AppColors.blueTask;
     }
@@ -187,6 +190,9 @@ class AppTheme {
       case 'TaskType.yellow':
       case 'yellow':
         return Icons.star_rounded;
+      case 'TaskType.finance':
+      case 'finance':
+        return Icons.account_balance_wallet_rounded;
       default:
         return Icons.task_alt_rounded;
     }

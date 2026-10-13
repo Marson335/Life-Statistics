@@ -111,6 +111,44 @@ class TaskRepository {
   // Toggle task completion
   Future<void> toggleTaskCompletion(String taskId, bool isCompleted) async {
     await _tasksCollection.doc(taskId).update({'isCompleted': isCompleted});
+    if (isCompleted) {
+      await NotificationService().cancelTaskReminder(taskId);
+    } else {
+      try {
+        final doc = await _tasksCollection.doc(taskId).get();
+        if (doc.exists) {
+          final task = Task.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+          if (task.reminderTime != null && task.reminderTime!.isNotEmpty) {
+            await NotificationService().scheduleTaskReminder(task);
+          }
+        }
+      } catch (_) {}
+    }
+  }
+
+  // Get upcoming and active tasks that have reminders set
+  Future<List<Task>> getActiveTasksWithReminders() async {
+    if (_auth.currentUser == null) return [];
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final futureEnd = today.add(const Duration(days: 30));
+
+    try {
+      final snapshot = await _tasksCollection
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(today))
+          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(futureEnd))
+          .get();
+
+      final tasks = snapshot.docs
+          .map((doc) => Task.fromMap(doc.data() as Map<String, dynamic>, doc.id))
+          .where((t) => !t.isCompleted && t.reminderTime != null && t.reminderTime!.isNotEmpty)
+          .toList();
+
+      return tasks;
+    } catch (e) {
+      print('[TaskRepository] Error fetching tasks with reminders: $e');
+      return [];
+    }
   }
 
   // Delete task
@@ -201,22 +239,19 @@ class TaskRepository {
     double totalCompletedMoney = 0;
     
     for (final t in tasks) {
-      // Red/yellow tasks are auto-confirmed (no checkbox), so always count their money.
-      final bool countMoney = t.isCompleted ||
-          t.type == TaskType.red ||
-          t.type == TaskType.yellow;
-
-      if (countMoney && (t.moneySpent ?? 0) > 0) {
-        totalCompletedMoney += t.moneySpent!;
-        
-        String dateKey;
-        if (isYearly) {
-          dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}";
-        } else {
-          dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}-${t.date.day.toString().padLeft(2, '0')}";
+      if (t.type == TaskType.finance) {
+        if ((t.moneySpent ?? 0) > 0) {
+          totalCompletedMoney += t.moneySpent!;
+          
+          String dateKey;
+          if (isYearly) {
+            dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}";
+          } else {
+            dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}-${t.date.day.toString().padLeft(2, '0')}";
+          }
+          
+          expensesChart[dateKey] = (expensesChart[dateKey] ?? 0) + t.moneySpent!;
         }
-        
-        expensesChart[dateKey] = (expensesChart[dateKey] ?? 0) + t.moneySpent!;
       }
     }
 
@@ -262,8 +297,6 @@ class TaskRepository {
     int streak = 0;
     int antiStreak = 0;
     int state = 0; 
-    
-    DateTime? expectedDate;
 
     for (var t in tasks) {
       final taskDate = t['date'] as DateTime;
@@ -271,21 +304,6 @@ class TaskRepository {
       if (taskDay.isAfter(normalizedDate)) continue;
       
       final isCompleted = t['isCompleted'] as bool;
-
-      if (expectedDate != null) {
-        final diff = expectedDate.difference(taskDay).inDays;
-        if (diff > 0) {
-          if (state == 0) {
-            state = 2;
-            antiStreak += diff;
-          } else if (state == 1) {
-            break;
-          } else if (state == 2) {
-            antiStreak += diff;
-          }
-        }
-      }
-      expectedDate = taskDay.subtract(const Duration(days: 1));
 
       if (state == 0) {
         if (taskDay == normalizedDate && !isCompleted) {
@@ -483,35 +501,28 @@ class TaskRepository {
       double totalIncome = 0;
       
       for (final t in tasks) {
-        // Red/yellow tasks are auto-confirmed (no checkbox), so always count their money.
-        // Green/blue tasks need isCompleted to count.
-        final bool countMoney = t.isCompleted ||
-            t.type == TaskType.red ||
-            t.type == TaskType.yellow;
-
-        if (countMoney) {
-          String dateKey;
-          if (isYearly) {
-            dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}";
-          } else {
-            dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}-${t.date.day.toString().padLeft(2, '0')}";
-          }
-
-          if ((t.moneySpent ?? 0) > 0) {
-            totalExpense += t.moneySpent!;
-            expensesChart[dateKey] = (expensesChart[dateKey] ?? 0) + t.moneySpent!;
-            final title = t.title;
-            expensesBreakdown[title] = (expensesBreakdown[title] ?? 0) + t.moneySpent!;
-          }
-          
-          if ((t.moneyEarned ?? 0) > 0) {
-            totalIncome += t.moneyEarned!;
-            incomeChart[dateKey] = (incomeChart[dateKey] ?? 0) + t.moneyEarned!;
-            final title = t.title;
-            incomeBreakdown[title] = (incomeBreakdown[title] ?? 0) + t.moneyEarned!;
+          if (t.type == TaskType.finance) {
+            String dateKey;
+            if (isYearly) {
+              dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}";
+            } else {
+              dateKey = "${t.date.year}-${t.date.month.toString().padLeft(2, '0')}-${t.date.day.toString().padLeft(2, '0')}";
+            }
+  
+            if ((t.moneySpent ?? 0) > 0) {
+              totalExpense += t.moneySpent!;
+              expensesChart[dateKey] = (expensesChart[dateKey] ?? 0) + t.moneySpent!;
+              final tagOrTitle = t.tag ?? 'Інше';
+              expensesBreakdown[tagOrTitle] = (expensesBreakdown[tagOrTitle] ?? 0) + t.moneySpent!;
+            }
+            if ((t.moneyEarned ?? 0) > 0) {
+              totalIncome += t.moneyEarned!;
+              incomeChart[dateKey] = (incomeChart[dateKey] ?? 0) + t.moneyEarned!;
+              final tagOrTitle = t.tag ?? 'Інше';
+              incomeBreakdown[tagOrTitle] = (incomeBreakdown[tagOrTitle] ?? 0) + t.moneyEarned!;
+            }
           }
         }
-      }
 
       return {
         'total': checkableTasks.length,
@@ -628,18 +639,11 @@ class TaskRepository {
         int tempStreak = 0;
         
         int state = 0;
-        DateTime? expectedDate;
 
         for (final t in tasks) {
           final isCompleted = t['isCompleted'] as bool;
           final taskDate = t['date'] as DateTime;
           final taskDay = DateTime(taskDate.year, taskDate.month, taskDate.day);
-          
-          if (expectedDate != null) {
-            final diff = expectedDate.difference(taskDay).inDays;
-            if (diff > 0) break;
-          }
-          expectedDate = taskDay.subtract(const Duration(days: 1));
 
           if (state == 0) {
             if (taskDay == today && !isCompleted) {
@@ -661,17 +665,8 @@ class TaskRepository {
           }
         }
 
-        DateTime? maxExpectedDate;
         for (final t in tasks.reversed) {
           final isCompleted = t['isCompleted'] as bool;
-          final taskDate = t['date'] as DateTime;
-          final taskDay = DateTime(taskDate.year, taskDate.month, taskDate.day);
-          
-          if (maxExpectedDate != null) {
-            final diff = taskDay.difference(maxExpectedDate).inDays;
-            if (diff > 0) tempStreak = 0;
-          }
-          maxExpectedDate = taskDay.add(const Duration(days: 1));
 
           if (isCompleted) {
             tempStreak++;

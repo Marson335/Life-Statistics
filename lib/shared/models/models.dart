@@ -1,7 +1,7 @@
-﻿export 'user_settings.dart';
+export 'user_settings.dart';
 export 'daily_macros.dart';
 // Task type enum
-enum TaskType { green, blue, red, yellow }
+enum TaskType { green, blue, red, yellow, finance }
 
 // Recurrence frequency
 enum RecurrenceFrequency { daily, weekly, custom }
@@ -21,6 +21,7 @@ class Task {
   final DateTime createdAt;
   final String? groupId; // for green tasks versioning
   final String? reminderTime; // Format: "HH:mm"
+  final String? tag;
 
   Task({
     required this.id,
@@ -36,6 +37,7 @@ class Task {
     required this.createdAt,
     this.groupId,
     this.reminderTime,
+    this.tag,
   });
 
   bool get hasCheckbox => type == TaskType.green || type == TaskType.blue;
@@ -60,6 +62,7 @@ class Task {
       createdAt: (map['createdAt'] as dynamic).toDate(),
       groupId: map['groupId'],
       reminderTime: map['reminderTime'],
+      tag: map['tag'],
     );
   }
 
@@ -77,6 +80,7 @@ class Task {
       'createdAt': createdAt,
       'groupId': groupId,
       'reminderTime': reminderTime,
+      'tag': tag,
     };
   }
 
@@ -94,6 +98,7 @@ class Task {
     DateTime? createdAt,
     String? groupId,
     String? reminderTime,
+    String? tag,
   }) {
     return Task(
       id: id ?? this.id,
@@ -109,6 +114,7 @@ class Task {
       createdAt: createdAt ?? this.createdAt,
       groupId: groupId ?? this.groupId,
       reminderTime: reminderTime ?? this.reminderTime,
+      tag: tag ?? this.tag,
     );
   }
 }

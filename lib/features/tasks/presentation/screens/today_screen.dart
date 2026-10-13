@@ -5,6 +5,8 @@ import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/date_utils.dart' as app_date;
 import '../../../../core/services/notification_service.dart';
 import '../../data/task_repository.dart';
+import '../../data/notification_expense_service.dart';
+import '../../../settings/data/settings_repository.dart';
 
 // Provider for selected date
 final selectedDateProvider = StateProvider<DateTime>((ref) => DateTime.now());
@@ -32,6 +34,13 @@ class TodayScreen extends ConsumerStatefulWidget {
 }
 
 class _TodayScreenState extends ConsumerState<TodayScreen> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      NotificationExpenseService().startListening(ref.read(taskRepositoryProvider));
+    });
+  }
   @override
   Widget build(BuildContext context) {
     final selectedDate = ref.watch(selectedDateProvider);
@@ -176,6 +185,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         tasks.where((t) => t.type == TaskType.red).toList();
     final yellowTasks =
         tasks.where((t) => t.type == TaskType.yellow).toList();
+      final financeTasks = tasks.where((t) => t.type == TaskType.finance).toList();
 
     final checkable = tasks.where((t) => t.hasCheckbox).toList();
     final completedCount = checkable.where((t) => t.isCompleted).length;
@@ -212,6 +222,12 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
               'Успіхи', AppColors.yellowTask, Icons.star_rounded),
           ...yellowTasks.map((t) => _TaskCard(task: t)),
         ],
+          if (financeTasks.isNotEmpty) ...[
+            _buildSectionHeader(
+                'Фінанси', AppColors.accent, Icons.account_balance_wallet_rounded),
+            ...financeTasks.map((t) => _TaskCard(task: t)),
+            const SizedBox(height: 12),
+          ],
         const SizedBox(height: 80),
       ],
     );
@@ -355,12 +371,20 @@ class _TaskCard extends ConsumerWidget {
     final isToday = taskDay.isAtSameMomentAs(today);
     final isPast = taskDay.isBefore(today);
 
+        final isUncategorizedFinance = task.type == TaskType.finance &&
+        (task.tag == null || task.tag!.isEmpty || task.tag == 'Не вказано');
+    final isIncomeTask = task.moneyEarned != null && task.moneyEarned! > 0;
+    final highlightColor = isIncomeTask ? AppColors.greenTask : AppColors.accent;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(
+          color: isUncategorizedFinance ? highlightColor.withAlpha(120) : AppColors.border,
+          width: isUncategorizedFinance ? 1.5 : 1.0,
+        ),
         boxShadow: [
           BoxShadow(
             color: color.withAlpha(20),
@@ -369,68 +393,129 @@ class _TaskCard extends ConsumerWidget {
           ),
         ],
       ),
-      child: ListTile(
-        contentPadding:
-            const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-        leading: task.hasCheckbox
-            ? GestureDetector(
-                onTap: isToday ? () => repo.toggleTaskCompletion(task.id, !task.isCompleted) : null,
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 200),
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: task.isCompleted
-                        ? color
-                        : Colors.transparent,
-                    borderRadius: BorderRadius.circular(6),
-                    border: Border.all(
-                      color: task.isCompleted
-                          ? color
-                          : AppColors.textSecondary,
-                      width: 1.5,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ListTile(
+            contentPadding:
+                const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+            leading: task.hasCheckbox
+                ? GestureDetector(
+                    onTap: isToday ? () => repo.toggleTaskCompletion(task.id, !task.isCompleted) : null,
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 200),
+                      width: 24,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: task.isCompleted
+                            ? color
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: task.isCompleted
+                              ? color
+                              : AppColors.textSecondary,
+                          width: 1.5,
+                        ),
+                      ),
+                      child: task.isCompleted
+                          ? const Icon(Icons.check_rounded,
+                              color: Colors.white, size: 16)
+                          : null,
                     ),
+                  )
+                : Container(
+                    width: 10,
+                    height: 10,
+                    decoration:
+                        BoxDecoration(color: color, shape: BoxShape.circle),
                   ),
-                  child: task.isCompleted
-                      ? const Icon(Icons.check_rounded,
-                          color: Colors.white, size: 16)
-                      : null,
-                ),
-              )
-            : Container(
-                width: 10,
-                height: 10,
+            title: Text(
+              task.title,
+              style: TextStyle(
+                color: task.isCompleted
+                    ? AppColors.textSecondary
+                    : AppColors.textPrimary,
+                fontSize: 15,
                 decoration:
-                    BoxDecoration(color: color, shape: BoxShape.circle),
-              ),
-        title: Text(
-          task.title,
-          style: TextStyle(
-            color: task.isCompleted
-                ? AppColors.textSecondary
-                : AppColors.textPrimary,
-            fontSize: 15,
-            decoration:
-                task.isCompleted ? TextDecoration.lineThrough : null,
-          ),
-        ),
-        subtitle: _buildSubtitle(task),
-        trailing: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (task.type == TaskType.green && task.groupId != null)
-              StreakBadge(groupId: task.groupId!, date: task.date),
-            Container(
-              width: 4,
-              height: 40,
-              decoration: BoxDecoration(
-                color: color,
-                borderRadius: BorderRadius.circular(2),
+                    task.isCompleted ? TextDecoration.lineThrough : null,
               ),
             ),
-          ],
-        ),
-        onLongPress: isPast ? null : () => _showTaskOptions(context, ref, task),
+            subtitle: _buildSubtitle(task),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (task.type == TaskType.green && task.groupId != null)
+                  StreakBadge(groupId: task.groupId!, date: task.date),
+                Container(
+                  width: 4,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: color,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ],
+            ),
+            onLongPress: isPast ? null : () => _showTaskOptions(context, ref, task),
+          ),
+          if (isUncategorizedFinance)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Divider(color: AppColors.border, height: 1),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(Icons.category_rounded, size: 14, color: highlightColor),
+                      const SizedBox(width: 4),
+                      Text(
+                        isIncomeTask ? 'Оберіть категорію доходу:' : 'Оберіть категорію витрати:',
+                        style: TextStyle(
+                          color: highlightColor,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final settings = ref.watch(settingsProvider).valueOrNull;
+                      final tags = isIncomeTask
+                          ? (settings?.incomeTags ?? ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'])
+                          : (settings?.expenseTags ?? ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше']);
+                      return Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: tags.map((t) {
+                          return ActionChip(
+                            label: Text(
+                              t,
+                              style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
+                            ),
+                            backgroundColor: AppColors.surfaceVariant,
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              side: const BorderSide(color: AppColors.border),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                            onPressed: () {
+                              final updated = task.copyWith(tag: t);
+                              repo.updateTask(updated);
+                            },
+                          );
+                        }).toList(),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -446,6 +531,11 @@ class _TaskCard extends ConsumerWidget {
     }
     if (task.moneyEarned != null && task.moneyEarned! > 0) {
       parts.add('💰 +${task.moneyEarned!.toStringAsFixed(0)} грн');
+    }
+    if (task.tag != null && task.tag!.isNotEmpty) {
+      parts.add('🏷 ${task.tag}');
+    } else if (task.type == TaskType.finance) {
+      parts.add('⚠️ Без категорії');
     }
     if (parts.isEmpty) return null;
     return Text(
@@ -526,6 +616,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
   bool _isLoading = false;
   String? _reminderTime;
   bool _isIncome = false;
+  String? _selectedTag;
 
   @override
   void initState() {
@@ -536,6 +627,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
       _timeController.text = t.timeSpentMinutes?.toString() ?? '';
       _isIncome = t.moneyEarned != null && t.moneyEarned! > 0;
       _moneyController.text = _isIncome ? (t.moneyEarned?.toString() ?? '') : (t.moneySpent?.toString() ?? '');
+      _selectedTag = t.tag;
       _selectedType = t.type;
       _reminderTime = t.reminderTime;
       if (t.recurrence != null) {
@@ -573,70 +665,85 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
           const SizedBox(height: 16),
           _buildTypeSelector(),
           const SizedBox(height: 16),
-          TextField(
-            controller: _titleController,
-            autofocus: true,
-            style: const TextStyle(color: AppColors.textPrimary),
-            decoration: const InputDecoration(
-              hintText: 'Назва задачі...',
-              labelText: 'Назва',
+          if (_selectedType != TaskType.finance) ...[
+            TextField(
+              controller: _titleController,
+              autofocus: true,
+              style: const TextStyle(color: AppColors.textPrimary),
+              decoration: const InputDecoration(
+                hintText: 'Назва задачі...',
+                labelText: 'Назва',
+              ),
             ),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _timeController,
-                  keyboardType: TextInputType.number,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(
-                    labelText: 'Час (хв)',
-                    prefixIcon: Icon(Icons.timer_outlined,
-                        color: AppColors.textSecondary),
-                  ),
+            const SizedBox(height: 12),
+          ],
+            if (_selectedType != TaskType.finance)
+              TextField(
+                controller: _timeController,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: AppColors.textPrimary),
+                decoration: const InputDecoration(
+                  labelText: 'Час (хв)',
+                  prefixIcon: Icon(Icons.timer_outlined, color: AppColors.textSecondary),
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(_isIncome ? 'Прибуток' : 'Витрата', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                          SizedBox(
-                            height: 24,
-                            child: Switch(
-                              value: _isIncome,
-                              activeColor: AppColors.greenTask,
-                              inactiveThumbColor: AppColors.redTask,
-                              inactiveTrackColor: AppColors.redTask.withAlpha(50),
-                              onChanged: (val) => setState(() => _isIncome = val),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 4),
-                      TextField(
-                        controller: _moneyController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        style: const TextStyle(color: AppColors.textPrimary),
-                        decoration: InputDecoration(
-                          hintText: '0.0',
-                          prefixIcon: Icon(
-                            _isIncome ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-                            color: _isIncome ? AppColors.greenTask : AppColors.redTask,
-                          ),
-                        ),
-                      ),
-                    ],
+            if (_selectedType == TaskType.finance) ...[
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(_isIncome ? 'Прибуток (Дохід)' : 'Витрата', style: const TextStyle(color: AppColors.textPrimary, fontSize: 16)),
+                  Switch(
+                    value: _isIncome,
+                    activeColor: AppColors.greenTask,
+                    inactiveThumbColor: AppColors.redTask,
+                    inactiveTrackColor: AppColors.redTask.withAlpha(50),
+                    onChanged: (val) => setState(() {
+                      _isIncome = val;
+                      _selectedTag = null; // reset tag on switch
+                    }),
                   ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: _moneyController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: AppColors.textPrimary),
+                decoration: const InputDecoration(
+                  labelText: 'Сума (грн)',
+                  prefixIcon: Icon(Icons.account_balance_wallet_outlined, color: AppColors.textSecondary),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 16),
+              Consumer(
+                builder: (context, ref, child) {
+                  final settings = ref.watch(settingsProvider).valueOrNull;
+                  if (settings == null) return const SizedBox.shrink();
+                  final tags = _isIncome ? settings.incomeTags : settings.expenseTags;
+                  
+                  if (!tags.contains(_selectedTag) && _selectedTag != null) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) {
+                      setState(() => _selectedTag = null);
+                    });
+                  }
+
+                  return DropdownButtonFormField<String>(
+                    value: _selectedTag,
+                    dropdownColor: AppColors.surface,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Категорія',
+                      prefixIcon: Icon(Icons.label_outline, color: AppColors.textSecondary),
+                    ),
+                    items: tags.map((tag) => DropdownMenuItem(
+                      value: tag,
+                      child: Text(tag),
+                    )).toList(),
+                    onChanged: (val) => setState(() => _selectedTag = val),
+                  );
+                },
+              ),
+            ],
             if (_selectedType == TaskType.green) ...[
               const SizedBox(height: 16),
               _buildRecurrenceSelector(),
@@ -678,14 +785,16 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
       TaskType.green,
       TaskType.blue,
       TaskType.red,
-      TaskType.yellow
+      TaskType.yellow,
+      TaskType.finance
     ];
-    final labels = ['Повторювані', 'Заплановані', 'Невдачі', 'Успіхи'];
+    final labels = ['Повторювані', 'Заплановані', 'Невдачі', 'Успіхи', 'Фінанси'];
     final icons = [
       Icons.repeat_rounded,
       Icons.event_note_rounded,
       Icons.warning_amber_rounded,
-      Icons.star_rounded
+      Icons.star_rounded,
+      Icons.account_balance_wallet_rounded
     ];
 
     return Row(
@@ -849,7 +958,8 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
   }
 
   Future<void> _saveTask() async {
-    if (_titleController.text.trim().isEmpty || _isLoading) return;
+    if (_isLoading) return;
+    if (_selectedType != TaskType.finance && _titleController.text.trim().isEmpty) return;
     setState(() => _isLoading = true);
 
     final date = ref.read(selectedDateProvider);
@@ -869,8 +979,9 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
     final task = Task(
       id: uid,
       userId: '',
-      title: _titleController.text.trim(),
+      title: _selectedType == TaskType.finance ? (_selectedTag ?? 'Фінанси') : _titleController.text.trim(),
       type: _selectedType,
+      tag: _selectedType == TaskType.finance ? _selectedTag : null,
       date: widget.taskToEdit?.date ?? date,
       timeSpentMinutes: int.tryParse(_timeController.text),
       moneySpent: !_isIncome ? double.tryParse(_moneyController.text) : null,
