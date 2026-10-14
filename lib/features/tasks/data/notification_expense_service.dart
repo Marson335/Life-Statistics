@@ -28,6 +28,24 @@ class ParsedTransaction {
       'ParsedTransaction(amount: $amount, merchant: "$merchant", isIncome: $isIncome)';
 }
 
+class NotificationDiagnosticEntry {
+  final DateTime timestamp;
+  final String packageName;
+  final String title;
+  final String content;
+  final bool parsed;
+  final String? parsedSummary;
+
+  NotificationDiagnosticEntry({
+    required this.timestamp,
+    required this.packageName,
+    required this.title,
+    required this.content,
+    required this.parsed,
+    this.parsedSummary,
+  });
+}
+
 class NotificationExpenseService {
   static final NotificationExpenseService _instance =
       NotificationExpenseService._internal();
@@ -43,6 +61,7 @@ class NotificationExpenseService {
 
   final Set<String> _processedNotificationKeys = {};
   final List<({double amount, bool isIncome, DateTime time})> _recentTransactions = [];
+  final List<NotificationDiagnosticEntry> diagnosticLogs = [];
 
   bool get isListening => _isListening;
 
@@ -152,20 +171,46 @@ class NotificationExpenseService {
       }
     }
 
-    // Always scan active notifications on launch
+    // Always scan active and background queue notifications on launch
     await scanActiveNotifications();
   }
 
-  /// Scans notifications currently sitting in the Android status bar.
-  /// This ensures transactions that occurred while the app was in the background
-  /// or when the phone was locked are caught immediately.
-  Future<void> scanActiveNotifications() async {
-    if (kIsWeb || !Platform.isAndroid) return;
+  /// Scans notifications sitting in native pending queue or in the status bar.
+  Future<List<NotificationDiagnosticEntry>> scanActiveNotifications() async {
+    if (kIsWeb || !Platform.isAndroid) return [];
     final enabled = await isAutoTrackEnabled();
-    if (!enabled) return;
+    if (!enabled) return [];
     final hasPerm = await isPermissionGranted();
-    if (!hasPerm) return;
+    if (!hasPerm) return [];
 
+    final initialCount = diagnosticLogs.length;
+
+    // 1. Process notifications stored in background native queue while Flutter was asleep
+    try {
+      final pending = await NotificationListenerService.getPendingNotifications();
+      if (pending.isNotEmpty) {
+        print('[NotificationExpenseService] 📬 Processing ${pending.length} pending background notifications...');
+        for (final item in pending) {
+          final pkg = (item['packageName'] ?? '').toString();
+          final title = (item['title'] ?? '').toString();
+          final content = (item['content'] ?? '').toString();
+          final id = item['id'] is int ? item['id'] as int : 0;
+          final postTime = item['postTime'] is int ? item['postTime'] as int : 0;
+          await _handleRawNotification(
+            packageName: pkg,
+            title: title,
+            content: content,
+            id: id,
+            timestamp: postTime,
+          );
+        }
+        await NotificationListenerService.clearPendingNotifications();
+      }
+    } catch (e) {
+      print('[NotificationExpenseService] ⚠️ Error retrieving pending notifications: $e');
+    }
+
+    // 2. Scan notifications currently sitting in the Android status bar
     try {
       const channel = MethodChannel('x-slayer/notifications_channel');
       final dynamic raw = await channel.invokeMethod('getActiveNotifications');
@@ -191,6 +236,12 @@ class NotificationExpenseService {
     } catch (e) {
       print('[NotificationExpenseService] ⚠️ Error scanning active notifications: $e');
     }
+
+    final newCount = diagnosticLogs.length;
+    if (newCount > initialCount) {
+      return diagnosticLogs.sublist(0, newCount - initialCount);
+    }
+    return [];
   }
 
   void stopListening() {
@@ -222,6 +273,28 @@ class NotificationExpenseService {
     if (isRemoved) return;
     if (title.isEmpty && content.isEmpty) return;
 
+    final parsed = parseNotification(
+      packageName: packageName,
+      title: title,
+      content: content,
+    );
+
+    // Record diagnostic entry for UI inspection
+    final diagnostic = NotificationDiagnosticEntry(
+      timestamp: DateTime.now(),
+      packageName: packageName,
+      title: title,
+      content: content,
+      parsed: parsed != null,
+      parsedSummary: parsed != null
+          ? '${parsed.isIncome ? "Дохід" : "Витрата"}: ${parsed.amount.toStringAsFixed(2)} грн (${parsed.merchant ?? "Невідомо"})'
+          : null,
+    );
+    diagnosticLogs.insert(0, diagnostic);
+    if (diagnosticLogs.length > 30) {
+      diagnosticLogs.removeLast();
+    }
+
     // Check unique key for this notification to avoid re-processing identical notification
     final notiKey = '${packageName}_${id}_${timestamp}_${title}_$content';
     if (_processedNotificationKeys.contains(notiKey)) {
@@ -231,18 +304,14 @@ class NotificationExpenseService {
     print(
         '[NotificationExpenseService] 📥 Received from "$packageName": title="$title", content="$content"');
 
-    final parsed = parseNotification(
-      packageName: packageName,
-      title: title,
-      content: content,
-    );
-
     if (parsed != null) {
       print(
           '[NotificationExpenseService] ✅ Parsed financial transaction: ${parsed.isIncome ? "Income" : "Expense"} ${parsed.amount} грн, merchant="${parsed.merchant}"');
-      await _saveProcessedKey(notiKey);
       _taskRepo ??= TaskRepository();
-      await _processTransaction(parsed);
+      final success = await _processTransaction(parsed);
+      if (success) {
+        await _saveProcessedKey(notiKey);
+      }
     }
   }
 
@@ -251,7 +320,7 @@ class NotificationExpenseService {
     required String title,
     required String content,
   }) {
-    // 1. Normalize spaces, non-breaking spaces (\u00A0), and trim
+    // 1. Normalize spaces, non-breaking spaces (\u00A0), en-dash (\u2013), em-dash (\u2014), minus (\u2212)
     final cleanTitle = title.replaceAll('\u00A0', ' ').trim();
     final cleanContent = content.replaceAll('\u00A0', ' ').trim();
     final combinedText = '$cleanTitle $cleanContent';
@@ -262,6 +331,7 @@ class NotificationExpenseService {
       'com.ftband.mono', // Monobank
       'ua.privatbank.ap24', // Privat24
       'com.google.android.apps.walletnfcrel', // Google Wallet / Pay
+      'com.google.android.apps.wallet',
       'com.google.android.gms', // Google Play Services (Google Pay tap)
       'ua.pumb.mobile', // PUMB
       'com.pumb',
@@ -276,6 +346,7 @@ class NotificationExpenseService {
       'ua.izibank', // IziBank
       'com.revolut.revolut', // Revolut
       'com.transferwise.android', // Wise
+      'com.android.shell', // For ADB and test simulation
     ];
 
     final isBankPackage =
@@ -327,8 +398,23 @@ class NotificationExpenseService {
     final hasIncomeKeyword =
         incomeKeywords.any((kw) => lowerCombined.contains(kw));
 
-    // Must be a bank app OR contain transaction keywords
-    if (!isBankPackage && (!hasExpenseKeyword && !hasIncomeKeyword)) {
+    final hasCurrency = RegExp(r'(?:₴|грн|uah|\$|€)', caseSensitive: false).hasMatch(combinedText);
+    final hasCardOrBankIndicator = lowerCombined.contains('monobank') ||
+        lowerCombined.contains('privat') ||
+        lowerCombined.contains('приват') ||
+        lowerCombined.contains('гаманець') ||
+        lowerCombined.contains('wallet') ||
+        lowerCombined.contains('картк') ||
+        lowerCombined.contains('card') ||
+        lowerCombined.contains('пумб') ||
+        lowerCombined.contains('ощад') ||
+        RegExp(r'(?:••|\*\*|\*)\s*\d{2,4}').hasMatch(combinedText);
+
+    // Must be a recognized bank app OR contain financial keywords OR (has currency + card/bank indicator)
+    if (!isBankPackage &&
+        !hasExpenseKeyword &&
+        !hasIncomeKeyword &&
+        !(hasCurrency && hasCardOrBankIndicator)) {
       return null;
     }
 
@@ -340,8 +426,9 @@ class NotificationExpenseService {
         RegExp(r'\+\s*\d+').hasMatch(cleanTitle)) {
       isIncome = true;
     }
-    // If explicitly has a minus sign, it is definitely an expense
-    if (cleanContent.contains('-') || cleanContent.contains('−')) {
+    // Explicit negative sign indicates expense
+    if (RegExp(r'[−\-–—]\s*\d+').hasMatch(cleanContent) ||
+        RegExp(r'[−\-–—]\s*\d+').hasMatch(cleanTitle)) {
       isIncome = false;
     }
 
@@ -357,9 +444,9 @@ class NotificationExpenseService {
     // 5. Extract Amount
     double? amount;
 
-    // Pattern A: Amount followed by currency: "-150 ₴", "150,00 ₴", "-21.3₴", "150.00UAH", "150 грн"
+    // Pattern A: Amount followed by currency: "-150 ₴", "150,00 ₴", "-21.3₴", "150.00UAH", "204,30 грн"
     final regexA = RegExp(
-      r'(?:^|[^\w])(?:[+−\-])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:₴|грн|uah|\$|€)',
+      r'(?:^|[^\w])(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:₴|грн|uah|\$|€)',
       caseSensitive: false,
     );
     final matchA = regexA.firstMatch(searchBody);
@@ -371,7 +458,7 @@ class NotificationExpenseService {
     // Pattern B: Currency followed by amount: "₴150.00", "$150", "€150.50"
     if (amount == null) {
       final regexB = RegExp(
-        r'(?:₴|грн|uah|\$|€)\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)',
+        r'(?:₴|грн|uah|\$|€)\s*(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)',
         caseSensitive: false,
       );
       final matchB = regexB.firstMatch(searchBody);
@@ -385,7 +472,7 @@ class NotificationExpenseService {
     // Pattern C: Action word followed by amount: "Оплата: 150.00", "Списання 200"
     if (amount == null) {
       final regexC = RegExp(
-        r'(?:оплата|oplata|списання|покупка|купівля|зняття|зарахування|поповнення|надходження|чек|платіж|переказ)\s*:?\s*(\d+(?:[.,]\d{1,2})?)',
+        r'(?:оплата|oplata|списання|покупка|купівля|зняття|зарахування|поповнення|надходження|чек|платіж|переказ)\s*:?\s*(?:[+−\-–—])?\s*(\d+(?:[.,]\d{1,2})?)',
         caseSensitive: false,
       );
       final matchC = regexC.firstMatch(searchBody);
@@ -396,17 +483,17 @@ class NotificationExpenseService {
       }
     }
 
-    // Pattern D: For known bank apps or Wallet, standalone signed number: "-150" or "+15000"
-    if (amount == null && isBankPackage) {
+    // Pattern D: Signed number for bank apps or Wallet: "-150" or "+15000"
+    if (amount == null && (isBankPackage || hasCardOrBankIndicator)) {
       final regexD = RegExp(
-        r'(?:^|[^\w])([+−\-]\s*\d+(?:[.,]\d{1,2})?)',
+        r'(?:^|[^\w])([+−\-–—]\s*\d+(?:[.,]\d{1,2})?)',
         caseSensitive: false,
       );
       final matchD = regexD.firstMatch(searchBody);
       if (matchD != null) {
         final rawNum = matchD
             .group(1)!
-            .replaceAll(RegExp(r'[+−\-\s]'), '')
+            .replaceAll(RegExp(r'[+−\-–—\s]'), '')
             .replaceAll(',', '.');
         amount = double.tryParse(rawNum);
       }
@@ -418,11 +505,14 @@ class NotificationExpenseService {
     String? merchant;
 
     if (isIncome) {
-      final senderMatch = RegExp(r'(?:від|from)\s+["«]?([^"»,.\n]+)["»]?',
-              caseSensitive: false)
-          .firstMatch(cleanContent);
+      final senderMatch = RegExp(
+        r'(?:від|from)\s+([^,.\n]+)',
+        caseSensitive: false,
+      ).firstMatch(cleanContent);
       if (senderMatch != null) {
-        merchant = senderMatch.group(1)?.trim();
+        var cand = senderMatch.group(1)?.trim();
+        cand = cand?.split(RegExp(r'\s*(?:баланс|картк|\.\.\.)', caseSensitive: false)).first.trim();
+        merchant = cand;
       }
       if (merchant == null && lowerCombined.contains('зарплат')) {
         merchant = 'Зарплата';
@@ -430,11 +520,25 @@ class NotificationExpenseService {
         merchant = 'Кешбек';
       }
     } else {
-      // 1) PRIVAT24: e.g. "Privat24: -21.3₴ Комуналка та Інтернет" or "Privat24: -269₴ Платежі за реквізитами"
-      if (packageName.contains('privat') || cleanContent.startsWith('Privat24:')) {
+      // 1) Explicit "у / в / at / in [Merchant]" (e.g. "Оплата 520.50 ₴ у McDonald's" or "у Сільпо")
+      final merchantMatch = RegExp(
+        r'(?:у|в|at|in)\s+([^,.\n]+)',
+        caseSensitive: false,
+      ).firstMatch(textBeforeBalance);
+      if (merchantMatch != null) {
+        String cand = merchantMatch.group(1)?.trim() ?? '';
+        cand = cand.split(RegExp(r'\s*(?:картк|card|баланс|\*|\.\.\.)', caseSensitive: false)).first.trim();
+        cand = cand.replaceAll(RegExp(r'^[•–\-—,\s]+|[•–\-—,\s]+$'), '').trim();
+        if (cand.isNotEmpty && !cand.toLowerCase().contains('баланс')) {
+          merchant = cand;
+        }
+      }
+
+      // 2) PRIVAT24: e.g. "Privat24: -21.3₴ Комуналка та Інтернет" or "Privat24: -269₴ Платежі за реквізитами"
+      if (merchant == null && (packageName.contains('privat') || cleanContent.startsWith('Privat24:') || cleanTitle.contains('Privat24'))) {
         final clean = textBeforeBalance
             .replaceFirst(RegExp(r'^Privat24\s*:\s*', caseSensitive: false), '')
-            .replaceFirst(RegExp(r'^[+−\-]?\s*\d+(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\s]*', caseSensitive: false), '')
+            .replaceFirst(RegExp(r'^[+−\-–—]?\s*\d+(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\s]*', caseSensitive: false), '')
             .trim();
 
         if (clean.isNotEmpty) {
@@ -446,8 +550,8 @@ class NotificationExpenseService {
         }
       }
 
-      // 2) GOOGLE WALLET: title is usually the merchant name
-      if (merchant == null && (packageName.contains('wallet') || packageName.contains('gms'))) {
+      // 3) GOOGLE WALLET: Title is the merchant (e.g. "MAGAZYN 0065", "KAFE MALENKA PE...", "Zootovari")
+      if (merchant == null && (packageName.contains('wallet') || packageName.contains('gms') || cleanContent.contains('••') || cleanContent.contains('monobank') || cleanTitle.contains('Google'))) {
         final lowerTitle = cleanTitle.toLowerCase();
         if (!lowerTitle.contains('google') &&
             !lowerTitle.contains('wallet') &&
@@ -456,9 +560,9 @@ class NotificationExpenseService {
           merchant = cleanTitle;
         }
 
-        // If title was "Google Гаманець", check after dash or bullet in content
+        // If title was "Google Гаманець", extract from content before or after dash
         if (merchant == null) {
-          final parts = cleanContent.split(RegExp(r'[•–\-]\s*'));
+          final parts = cleanContent.split(RegExp(r'[•–\-—]\s*'));
           for (final p in parts) {
             final trimmed = p.trim();
             final lower = trimmed.toLowerCase();
@@ -479,11 +583,12 @@ class NotificationExpenseService {
         }
       }
 
-      // 3) MONOBANK: e.g. "-150 ₴\nСільпо\nБаланс..." or "-150 ₴, Сільпо" or "-500 ₴\nПереказ на картку *1234"
+      // 4) MONOBANK: e.g. "-150 ₴\nСільпо\nБаланс..." or "-150 ₴, Сільпо"
       if (merchant == null && packageName.contains('mono')) {
         final clean = textBeforeBalance
             .replaceFirst(RegExp(r'^monobank\s*:\s*', caseSensitive: false), '')
-            .replaceFirst(RegExp(r'^[+−\-]?\s*\d+(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\n\s]*', caseSensitive: false), '')
+            .replaceFirst(RegExp(r'^(?:оплата|списання|купівля|покупка)?\s*', caseSensitive: false), '')
+            .replaceFirst(RegExp(r'^[+−\-–—]?\s*\d+(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\n\s]*', caseSensitive: false), '')
             .trim();
 
         if (clean.isNotEmpty) {
@@ -495,29 +600,31 @@ class NotificationExpenseService {
         }
       }
 
-      // 4) General "у/в/at/in [Merchant]"
-      if (merchant == null) {
-        final merchantMatch = RegExp(
-          r'(?:у|в|at|in|на)\s+["«]?([^"»,.\n]+)["»]?',
-          caseSensitive: false,
-        ).firstMatch(textBeforeBalance);
-        if (merchantMatch != null) {
-          final cand = merchantMatch.group(1)?.trim();
-          if (cand != null &&
-              !cand.toLowerCase().contains('картк') &&
-              !cand.toLowerCase().contains('баланс')) {
-            merchant = cand;
-          }
+      // 5) If title is not generic and not empty, use title as merchant
+      if (merchant == null && cleanTitle.isNotEmpty) {
+        final lowerTitle = cleanTitle.toLowerCase();
+        if (!lowerTitle.contains('сповіщення') &&
+            !lowerTitle.contains('повідомлення') &&
+            !lowerTitle.contains('notification') &&
+            !lowerTitle.contains('приват24') &&
+            !lowerTitle.contains('privat24') &&
+            !lowerTitle.contains('monobank') &&
+            !lowerTitle.contains('shell')) {
+          merchant = cleanTitle;
         }
       }
     }
 
-    // Clean up merchant if formatted with quotes
+    // Clean up merchant name
     if (merchant != null) {
-      merchant = merchant.replaceAll(RegExp(r'^[«"]|[»"]$'), '').trim();
+      if ((merchant.startsWith('"') && merchant.endsWith('"')) ||
+          (merchant.startsWith('«') && merchant.endsWith('»'))) {
+        merchant = merchant.substring(1, merchant.length - 1).trim();
+      }
       merchant = merchant.replaceAll(RegExp(r'\.{2,}$'), '').trim();
-      if (merchant.length > 40) {
-        merchant = merchant.substring(0, 40).trim();
+      merchant = merchant.replaceAll(RegExp(r'^[•–\-—,\s]+|[•–\-—,\s]+$'), '').trim();
+      if (merchant.length > 50) {
+        merchant = merchant.substring(0, 50).trim();
       }
     }
 
@@ -529,11 +636,20 @@ class NotificationExpenseService {
     );
   }
 
-  Future<void> _processTransaction(ParsedTransaction parsed) async {
-    final user = FirebaseAuth.instance.currentUser;
+  Future<bool> _processTransaction(ParsedTransaction parsed) async {
+    var user = FirebaseAuth.instance.currentUser;
     if (user == null) {
-      print('[NotificationExpenseService] ⚠️ User not logged in, skipping transaction storage.');
-      return;
+      try {
+        user = await FirebaseAuth.instance
+            .authStateChanges()
+            .firstWhere((u) => u != null)
+            .timeout(const Duration(seconds: 4));
+      } catch (_) {}
+    }
+
+    if (user == null) {
+      print('[NotificationExpenseService] ⚠️ User not logged in, postponing transaction.');
+      return false;
     }
 
     final now = DateTime.now();
@@ -546,7 +662,7 @@ class NotificationExpenseService {
 
     if (isDuplicate) {
       print('[NotificationExpenseService] ⏭ Duplicate transaction ignored (within 90s dual-notification window): ${parsed.amount} грн');
-      return;
+      return true; // Mark as processed since it's an intentional duplicate
     }
     _recentTransactions.add((amount: parsed.amount, isIncome: parsed.isIncome, time: now));
 
@@ -588,8 +704,10 @@ class NotificationExpenseService {
         title: notiTitle,
         body: notiBody,
       );
+      return true;
     } catch (e) {
       print('[NotificationExpenseService] ❌ Failed to add auto-tracked task: $e');
+      return false;
     }
   }
 

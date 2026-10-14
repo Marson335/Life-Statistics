@@ -13,6 +13,7 @@ import 'features/tasks/presentation/screens/today_screen.dart';
 import 'features/statistics/presentation/screens/statistics_screen.dart';
 import 'features/calories/presentation/screens/calories_screen.dart';
 import 'features/settings/presentation/screens/settings_screen.dart';
+import 'features/crypto/presentation/screens/crypto_screen.dart';
 import 'shared/widgets/main_scaffold.dart';
 
 void main() async {
@@ -44,6 +45,9 @@ final _router = GoRouter(
         GoRoute(
             path: '/calories',
             builder: (ctx, state) => const CaloriesScreen()),
+        GoRoute(
+            path: '/crypto',
+            builder: (ctx, state) => const CryptoScreen()),
         GoRoute(
             path: '/settings',
             builder: (ctx, state) => const SettingsScreen()),

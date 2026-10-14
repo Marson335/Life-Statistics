@@ -1,0 +1,148 @@
+import 'package:flutter_test/flutter_test.dart';
+import 'package:life_statistics/features/tasks/data/notification_expense_service.dart';
+
+void main() {
+  final service = NotificationExpenseService();
+
+  group('NotificationExpenseService Parser Tests', () {
+    test('Google Wallet payment: MAGAZYN 0065', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.google.android.apps.walletnfcrel',
+        title: 'MAGAZYN 0065',
+        content: '204,30 грн – monobank ••4394',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(204.30));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('MAGAZYN 0065'));
+    });
+
+    test('Google Wallet payment with trailing dots: KAFE MALENKA PE...', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.google.android.apps.walletnfcrel',
+        title: 'KAFE MALENKA PE...',
+        content: '40,00 грн – monobank ••4394',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(40.00));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('KAFE MALENKA PE'));
+    });
+
+    test('Google Wallet payment: Zootovari', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.google.android.apps.walletnfcrel',
+        title: 'Zootovari',
+        content: '125,00 грн – monobank ••4394',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(125.00));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('Zootovari'));
+    });
+
+    test('Privat24 payment: Комуналка та Інтернет', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Privat24: -21.3₴ Комуналка та Інтерне...',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(21.3));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('Комуналка та Інтерне'));
+    });
+
+    test('Privat24 payment: Платежі за реквізитам...', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Privat24: -269₴ Платежі за реквізитам...',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(269.0));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('Платежі за реквізитам'));
+    });
+
+    test('Privat24 payment with decimal: -269.39₴', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Privat24: -269.39₴ Комуналка та Інтер...',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(269.39));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('Комуналка та Інтер'));
+    });
+
+    test('Monobank payment: Сільпо with balance', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: 'monobank',
+        content: '-150 ₴\nСільпо\nБаланс: 1 200 ₴',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(150.0));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('Сільпо'));
+    });
+
+    test('Monobank payment: Оплата у McDonald\'s', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: 'monobank',
+        content: 'Оплата 520.50 ₴ у McDonald\'s. Картка *4394',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(520.50));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('McDonald\'s'));
+    });
+
+    test('ADB Shell test notification: MAGAZYN 0065', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.android.shell',
+        title: 'MAGAZYN 0065',
+        content: '204,30 грн – monobank ••4394',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(204.30));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('MAGAZYN 0065'));
+    });
+
+    test('Income notification: Зарахування зарплати', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Зарахування 15000.00 ₴ від ТОВ «Технолоджі». Баланс: 25000 ₴',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(15000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('ТОВ «Технолоджі»'));
+    });
+
+    test('Non-financial notification: should return null', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.google.android.apps.messaging',
+        title: 'Мама',
+        content: 'Привіт! Як справи?',
+      );
+
+      expect(parsed, isNull);
+    });
+  });
+}

@@ -24,6 +24,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _isFinanceExpanded = false;
   bool _isAutoExpenseEnabled = false;
   bool _hasNotificationPermission = false;
+  bool _isCryptoExpanded = false;
 
   @override
   void initState() {
@@ -50,10 +51,20 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   String _gender = 'male';
   String _goal = 'maintain';
   final _geminiKeyController = TextEditingController();
+  final _groqKeyController = TextEditingController();
+  final _binanceApiKeyController = TextEditingController();
+  final _binanceApiSecretController = TextEditingController();
+  final _solanaAddressController = TextEditingController();
+  final _evmAddressController = TextEditingController();
 
   @override
   void dispose() {
     _geminiKeyController.dispose();
+    _groqKeyController.dispose();
+    _binanceApiKeyController.dispose();
+    _binanceApiSecretController.dispose();
+    _solanaAddressController.dispose();
+    _evmAddressController.dispose();
     _ageController.dispose();
     _weightController.dispose();
     _heightController.dispose();
@@ -96,6 +107,11 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       gender: _gender,
       goal: _goal,
       geminiApiKey: _geminiKeyController.text.trim().isEmpty ? null : _geminiKeyController.text.trim(),
+      groqApiKey: _groqKeyController.text.trim().isEmpty ? null : _groqKeyController.text.trim(),
+      binanceApiKey: _binanceApiKeyController.text.trim().isEmpty ? null : _binanceApiKeyController.text.trim(),
+      binanceApiSecret: _binanceApiSecretController.text.trim().isEmpty ? null : _binanceApiSecretController.text.trim(),
+      solanaAddress: _solanaAddressController.text.trim(),
+      evmAddress: _evmAddressController.text.trim(),
       targetCalories: targetCalories,
       targetProtein: targetProtein,
       targetFats: targetFats,
@@ -137,13 +153,23 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             _gender = settings.gender;
             _goal = settings.goal;
             if (settings.geminiApiKey != null) _geminiKeyController.text = settings.geminiApiKey!;
+            if (settings.groqApiKey != null) _groqKeyController.text = settings.groqApiKey!;
+            if (settings.binanceApiKey != null) _binanceApiKeyController.text = settings.binanceApiKey!;
+            if (settings.binanceApiSecret != null) _binanceApiSecretController.text = settings.binanceApiSecret!;
+            if (settings.solanaAddress != null && settings.solanaAddress!.isNotEmpty) {
+              _solanaAddressController.text = settings.solanaAddress!;
+            }
+            if (settings.evmAddress != null && settings.evmAddress!.isNotEmpty) {
+              _evmAddressController.text = settings.evmAddress!;
+            }
           }
 
           return ListView(
             padding: const EdgeInsets.all(20),
             children: [
               _buildCaloriesSection(settings),
-              // More settings can be added here in the future
+              const SizedBox(height: 20),
+              _buildCryptoSection(settings),
               const SizedBox(height: 20),
               _buildAiSection(settings),
               const SizedBox(height: 20),
@@ -535,6 +561,134 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       },
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  const Divider(color: AppColors.border),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.sync_rounded, size: 18),
+                      label: const Text('🔍 Просканувати шторку сповіщень зараз'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.surfaceVariant,
+                        foregroundColor: AppColors.textPrimary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          side: const BorderSide(color: AppColors.border),
+                        ),
+                      ),
+                      onPressed: () async {
+                        final scanned = await NotificationExpenseService().scanActiveNotifications();
+                        if (mounted) {
+                          setState(() {});
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(
+                                scanned.isNotEmpty
+                                    ? 'Оброблено нових сповіщень: ${scanned.length}'
+                                    : 'Шторку перевірено. Нових фінансових сповіщень не виявлено.',
+                              ),
+                              backgroundColor: scanned.isNotEmpty ? AppColors.greenTask : AppColors.surfaceVariant,
+                            ),
+                          );
+                        }
+                      },
+                    ),
+                  ),
+                  if (NotificationExpenseService().diagnosticLogs.isNotEmpty) ...[
+                    const SizedBox(height: 16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Останні зчитані сповіщення:',
+                          style: TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              NotificationExpenseService().diagnosticLogs.clear();
+                            });
+                          },
+                          child: const Text('Очистити', style: TextStyle(fontSize: 11, color: AppColors.textSecondary)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Container(
+                      constraints: const BoxConstraints(maxHeight: 250),
+                      child: ListView.separated(
+                        shrinkWrap: true,
+                        itemCount: NotificationExpenseService().diagnosticLogs.length,
+                        separatorBuilder: (_, __) => const Divider(color: AppColors.border, height: 8),
+                        itemBuilder: (ctx, idx) {
+                          final log = NotificationExpenseService().diagnosticLogs[idx];
+                          return Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: log.parsed
+                                  ? AppColors.greenTask.withAlpha(25)
+                                  : AppColors.surfaceVariant.withAlpha(50),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: log.parsed
+                                    ? AppColors.greenTask.withAlpha(80)
+                                    : Colors.transparent,
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Icon(
+                                      log.parsed ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+                                      size: 14,
+                                      color: log.parsed ? AppColors.greenTask : AppColors.textSecondary,
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        '${log.packageName.split('.').last} • ${log.title.isNotEmpty ? log.title : "(без заголовка)"}',
+                                        style: const TextStyle(
+                                          color: AppColors.textPrimary,
+                                          fontWeight: FontWeight.bold,
+                                          fontSize: 12,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                if (log.content.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      log.content,
+                                      style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                                      maxLines: 2,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                  ),
+                                if (log.parsedSummary != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      '✅ ${log.parsedSummary}',
+                                      style: const TextStyle(
+                                        color: AppColors.greenTask,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -790,6 +944,159 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ],
           ),
           Text(value, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCryptoSection(UserSettings settings) {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        children: [
+          ListTile(
+            title: const Text(
+              'Криптопортфель та AI (Groq / Binance / Web3)',
+              style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold),
+            ),
+            subtitle: Text(
+              settings.groqApiKey != null ? 'Groq налаштовано • Llama 3.3 70B' : 'Вкажіть ключі для аудиту',
+              style: TextStyle(
+                color: settings.groqApiKey != null ? AppColors.greenTask : AppColors.textSecondary,
+                fontSize: 12,
+              ),
+            ),
+            leading: const Icon(Icons.currency_bitcoin_rounded, color: AppColors.accent),
+            trailing: Icon(
+              _isCryptoExpanded ? Icons.expand_less : Icons.expand_more,
+              color: AppColors.textSecondary,
+            ),
+            onTap: () {
+              setState(() => _isCryptoExpanded = !_isCryptoExpanded);
+            },
+          ),
+          if (_isCryptoExpanded)
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '1. Groq Cloud API (Штучний Інтелект):',
+                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Безкоштовний надшвидкий API (~300 токенів/с) для Meta Llama 3.3 70B. Не навантажує ПК та не падає від лімітів.',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                  TextButton.icon(
+                    onPressed: () async {
+                      final url = Uri.parse('https://console.groq.com/keys');
+                      try {
+                        await launchUrl(url);
+                      } catch (_) {}
+                    },
+                    icon: const Icon(Icons.vpn_key_rounded, color: AppColors.accent, size: 16),
+                    label: const Text(
+                      'Отримати безкоштовний ключ на console.groq.com',
+                      style: TextStyle(color: AppColors.accent, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    style: TextButton.styleFrom(padding: EdgeInsets.zero, alignment: Alignment.centerLeft),
+                  ),
+                  TextField(
+                    controller: _groqKeyController,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Groq API Key (gsk_...)',
+                      labelStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    '2. Біржа Binance (Спот, Ф\'ючерси, Simple Earn):',
+                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    'Рекомендується створити API ключ із дозволами ТІЛЬКИ на Читання (Read-Only) без права виведення коштів.',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  ),
+                  TextField(
+                    controller: _binanceApiKeyController,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Binance API Key',
+                      labelStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _binanceApiSecretController,
+                    obscureText: true,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Binance API Secret',
+                      labelStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    '3. Web3 Блокчейн-гаманці:',
+                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  TextField(
+                    controller: _solanaAddressController,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Solana адреса (Phantom/Solflare)',
+                      labelStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _evmAddressController,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'EVM адреса (MetaMask/Trust Wallet 0x...)',
+                      labelStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.save_rounded, color: Colors.white, size: 18),
+                      label: const Text(
+                        'Зберегти крипто-налаштування',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: () => _calculateAndSave(settings),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );

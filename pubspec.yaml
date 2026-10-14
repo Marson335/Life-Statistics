@@ -49,7 +49,10 @@ dependencies:
   google_generative_ai: ^0.4.7
   image_picker: ^1.2.3
   url_launcher: ^6.3.3
-  notification_listener_service: ^1.0.0
+  notification_listener_service:
+    path: ./packages/notification_listener_service
+  crypto: ^3.0.6
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

@@ -15,6 +15,13 @@ class UserSettings {
   final List<String> incomeTags;
   final String? geminiApiKey;
 
+  // Crypto Settings
+  final String? groqApiKey;
+  final String? binanceApiKey;
+  final String? binanceApiSecret;
+  final String? solanaAddress;
+  final String? evmAddress;
+
   UserSettings({
     required this.age,
     required this.weight,
@@ -28,6 +35,11 @@ class UserSettings {
     required this.expenseTags,
     required this.incomeTags,
     this.geminiApiKey,
+    this.groqApiKey,
+    this.binanceApiKey,
+    this.binanceApiSecret,
+    this.solanaAddress,
+    this.evmAddress,
   });
 
   factory UserSettings.defaultSettings() {
@@ -44,6 +56,11 @@ class UserSettings {
       expenseTags: ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше'],
       incomeTags: ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'],
       geminiApiKey: null,
+      groqApiKey: null,
+      binanceApiKey: null,
+      binanceApiSecret: null,
+      solanaAddress: '2jDw1BSMu5uJjzUHKnqHnycZ4a6P7V6coEwSRHvSJqhk',
+      evmAddress: null,
     );
   }
 
@@ -61,6 +78,11 @@ class UserSettings {
       'expenseTags': expenseTags,
       'incomeTags': incomeTags,
       'geminiApiKey': geminiApiKey,
+      'groqApiKey': groqApiKey,
+      'binanceApiKey': binanceApiKey,
+      'binanceApiSecret': binanceApiSecret,
+      'solanaAddress': solanaAddress,
+      'evmAddress': evmAddress,
     };
   }
 
@@ -78,6 +100,11 @@ class UserSettings {
       expenseTags: (map['expenseTags'] as List?)?.cast<String>() ?? ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше'],
       incomeTags: (map['incomeTags'] as List?)?.cast<String>() ?? ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'],
       geminiApiKey: map['geminiApiKey'] as String?,
+      groqApiKey: map['groqApiKey'] as String?,
+      binanceApiKey: map['binanceApiKey'] as String?,
+      binanceApiSecret: map['binanceApiSecret'] as String?,
+      solanaAddress: map['solanaAddress'] as String? ?? '2jDw1BSMu5uJjzUHKnqHnycZ4a6P7V6coEwSRHvSJqhk',
+      evmAddress: map['evmAddress'] as String?,
     );
   }
 
@@ -94,6 +121,11 @@ class UserSettings {
     List<String>? expenseTags,
     List<String>? incomeTags,
     String? geminiApiKey,
+    String? groqApiKey,
+    String? binanceApiKey,
+    String? binanceApiSecret,
+    String? solanaAddress,
+    String? evmAddress,
   }) {
     return UserSettings(
       age: age ?? this.age,
@@ -108,6 +140,11 @@ class UserSettings {
       expenseTags: expenseTags ?? this.expenseTags,
       incomeTags: incomeTags ?? this.incomeTags,
       geminiApiKey: geminiApiKey ?? this.geminiApiKey,
+      groqApiKey: groqApiKey ?? this.groqApiKey,
+      binanceApiKey: binanceApiKey ?? this.binanceApiKey,
+      binanceApiSecret: binanceApiSecret ?? this.binanceApiSecret,
+      solanaAddress: solanaAddress ?? this.solanaAddress,
+      evmAddress: evmAddress ?? this.evmAddress,
     );
   }
 }

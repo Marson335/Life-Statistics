@@ -1,4 +1,4 @@
-﻿import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../shared/models/models.dart';
@@ -25,6 +25,18 @@ class SettingsRepository {
       }
       return UserSettings.fromMap(snapshot.data() as Map<String, dynamic>);
     });
+  }
+
+  Future<UserSettings> getSettings() async {
+    try {
+      final doc = await _settingsDoc.get();
+      if (!doc.exists || doc.data() == null) {
+        return UserSettings.defaultSettings();
+      }
+      return UserSettings.fromMap(doc.data() as Map<String, dynamic>);
+    } catch (_) {
+      return UserSettings.defaultSettings();
+    }
   }
 
   Future<void> updateSettings(UserSettings settings) async {
