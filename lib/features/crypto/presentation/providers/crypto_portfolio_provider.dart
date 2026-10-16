@@ -10,12 +10,16 @@ import '../../data/groq_ai_service.dart';
 import '../../data/crypto_repository.dart';
 import '../../data/models/crypto_models.dart';
 import '../../data/crypto_portfolio_history_service.dart';
+import '../../data/crypto_market_scanner_service.dart';
 
 enum TimePeriod { h24, d7, d30, d90, y1, all }
 
 class CryptoPortfolioState {
   final bool isLoading;
   final bool isAuditing;
+  final bool isScanningMarket;
+  final String? scanProgressStatus;
+  final double scanProgress;
   final bool isLive;
   final PortfolioOverview overview;
   final Map<String, double> binanceSpot;
@@ -29,12 +33,16 @@ class CryptoPortfolioState {
   final TimePeriod selectedPeriod;
   final PortfolioHistoricalDataset? historicalDataset;
   final GroqAuditReport? auditReport;
+  final AiMarketRadarReport? radarReport;
   final String? errorMessage;
   final DateTime? lastUpdated;
 
   CryptoPortfolioState({
     required this.isLoading,
     required this.isAuditing,
+    this.isScanningMarket = false,
+    this.scanProgressStatus,
+    this.scanProgress = 0.0,
     required this.isLive,
     required this.overview,
     required this.binanceSpot,
@@ -48,6 +56,7 @@ class CryptoPortfolioState {
     required this.selectedPeriod,
     this.historicalDataset,
     this.auditReport,
+    this.radarReport,
     this.errorMessage,
     this.lastUpdated,
   });
@@ -56,6 +65,9 @@ class CryptoPortfolioState {
     return CryptoPortfolioState(
       isLoading: false,
       isAuditing: false,
+      isScanningMarket: false,
+      scanProgressStatus: null,
+      scanProgress: 0.0,
       isLive: false,
       overview: PortfolioOverview.empty(),
       binanceSpot: {},
@@ -69,6 +81,7 @@ class CryptoPortfolioState {
       selectedPeriod: TimePeriod.h24,
       historicalDataset: null,
       auditReport: null,
+      radarReport: null,
       errorMessage: null,
       lastUpdated: null,
     );
@@ -77,6 +90,9 @@ class CryptoPortfolioState {
   CryptoPortfolioState copyWith({
     bool? isLoading,
     bool? isAuditing,
+    bool? isScanningMarket,
+    String? scanProgressStatus,
+    double? scanProgress,
     bool? isLive,
     PortfolioOverview? overview,
     Map<String, double>? binanceSpot,
@@ -90,12 +106,16 @@ class CryptoPortfolioState {
     TimePeriod? selectedPeriod,
     PortfolioHistoricalDataset? historicalDataset,
     GroqAuditReport? auditReport,
+    AiMarketRadarReport? radarReport,
     String? errorMessage,
     DateTime? lastUpdated,
   }) {
     return CryptoPortfolioState(
       isLoading: isLoading ?? this.isLoading,
       isAuditing: isAuditing ?? this.isAuditing,
+      isScanningMarket: isScanningMarket ?? this.isScanningMarket,
+      scanProgressStatus: scanProgressStatus ?? this.scanProgressStatus,
+      scanProgress: scanProgress ?? this.scanProgress,
       isLive: isLive ?? this.isLive,
       overview: overview ?? this.overview,
       binanceSpot: binanceSpot ?? this.binanceSpot,
@@ -109,11 +129,124 @@ class CryptoPortfolioState {
       selectedPeriod: selectedPeriod ?? this.selectedPeriod,
       historicalDataset: historicalDataset ?? this.historicalDataset,
       auditReport: auditReport ?? this.auditReport,
+      radarReport: radarReport ?? this.radarReport,
       errorMessage: errorMessage,
       lastUpdated: lastUpdated ?? this.lastUpdated,
     );
   }
+
+  /// Допоміжний метод групування транзакцій
+  List<DcaGroupedCoin> _groupTransactions(List<DcaTransaction> txs) {
+    if (txs.isEmpty) return [];
+
+    final Map<String, List<DcaTransaction>> grouped = {};
+    for (final tx in txs) {
+      final sym = tx.symbol.toUpperCase();
+      grouped.putIfAbsent(sym, () => []).add(tx);
+    }
+
+    final List<DcaGroupedCoin> result = [];
+
+    for (final sym in grouped.keys) {
+      final txList = grouped[sym]!;
+      // Знаходимо актуальну ціну
+      double currentPrice = 0.0;
+      final match = overview.holdings.where((h) => h.symbol.toUpperCase() == sym);
+      if (match.isNotEmpty) {
+        currentPrice = match.first.currentPrice;
+      }
+      if (currentPrice <= 0 && txList.isNotEmpty) {
+        currentPrice = txList.first.buyPrice;
+      }
+
+      double totalAmount = 0.0;
+      double totalCost = 0.0;
+      final List<DcaTrancheItem> tranches = [];
+
+      for (final tx in txList) {
+        totalAmount += tx.amount;
+        final effectiveBuyPrice = tx.buyPrice > 0 ? tx.buyPrice : currentPrice;
+        final cost = (tx.amount * effectiveBuyPrice) + tx.fee;
+        totalCost += cost;
+
+        final tranchePnlPct = effectiveBuyPrice > 0
+            ? ((currentPrice - effectiveBuyPrice) / effectiveBuyPrice) * 100
+            : 0.0;
+        final tranchePnlUsd = tx.amount * (currentPrice - effectiveBuyPrice);
+
+        tranches.add(DcaTrancheItem(
+          id: tx.id,
+          symbol: sym,
+          amount: tx.amount,
+          buyPrice: effectiveBuyPrice,
+          fee: tx.fee,
+          date: tx.txDate,
+          walletType: tx.walletType,
+          notes: tx.notes,
+          currentPrice: currentPrice,
+          pnlPct: double.parse(tranchePnlPct.toStringAsFixed(2)),
+          pnlUsd: double.parse(tranchePnlUsd.toStringAsFixed(2)),
+        ));
+      }
+
+      final avgEntryPrice = totalAmount > 0 ? totalCost / totalAmount : 0.0;
+      final totalValueUsd = totalAmount * currentPrice;
+      final pnlUsd = totalValueUsd - totalCost;
+      final pnlPct = totalCost > 0 ? (pnlUsd / totalCost) * 100 : 0.0;
+
+      // Сортуємо транші всередині монети від найновіших до найстаріших
+      tranches.sort((a, b) => b.date.compareTo(a.date));
+
+      result.add(DcaGroupedCoin(
+        symbol: sym,
+        totalAmount: totalAmount,
+        avgEntryPrice: double.parse(avgEntryPrice.toStringAsFixed(4)),
+        totalCost: double.parse(totalCost.toStringAsFixed(2)),
+        currentPrice: currentPrice,
+        totalValueUsd: double.parse(totalValueUsd.toStringAsFixed(2)),
+        pnlUsd: double.parse(pnlUsd.toStringAsFixed(2)),
+        pnlPct: double.parse(pnlPct.toStringAsFixed(2)),
+        tranches: tranches,
+      ));
+    }
+
+    // Сортуємо за загальною цінністю в доларах від найбільшої до найменшої
+    result.sort((a, b) => b.totalValueUsd.compareTo(a.totalValueUsd));
+    return result;
+  }
+
+  /// Всі груповані DCA монети
+  List<DcaGroupedCoin> get groupedDcaCoins => _groupTransactions(dcaTransactions);
+
+  /// Тільки транзакції з біржі Binance (Spot & Convert FIFO)
+  List<DcaGroupedCoin> get binanceDcaCoins => _groupTransactions(
+        dcaTransactions.where((t) => t.walletType == 'Binance Spot' || t.walletType == 'BINANCE').toList(),
+      );
+
+  /// Тільки додані користувачем власноруч (Ручні DCA)
+  List<DcaGroupedCoin> get manualDcaCoins => _groupTransactions(
+        dcaTransactions.where((t) => t.walletType != 'Binance Spot' && t.walletType != 'BINANCE').toList(),
+      );
+
+  /// Підсумкові показники для DCA картки
+  ({double totalInvested, double totalValue, double totalPnlUsd, double totalPnlPct}) get dcaTotals {
+    double totalInvested = 0.0;
+    double totalValue = 0.0;
+    for (final c in groupedDcaCoins) {
+      totalInvested += c.totalCost;
+      totalValue += c.totalValueUsd;
+    }
+    final totalPnlUsd = totalValue - totalInvested;
+    final totalPnlPct = totalInvested > 0 ? (totalPnlUsd / totalInvested) * 100 : 0.0;
+    return (
+      totalInvested: totalInvested,
+      totalValue: totalValue,
+      totalPnlUsd: totalPnlUsd,
+      totalPnlPct: totalPnlPct,
+    );
+  }
 }
+
 
 final cryptoRepositoryProvider = Provider<CryptoRepository>((ref) => CryptoRepository());
 final cryptoPricingServiceProvider = Provider<CryptoPricingService>((ref) => CryptoPricingService());
@@ -195,9 +328,28 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       final earnItems = results[2] as List<BinanceEarnItem>;
       final solanaAssets = results[3] as List<Web3Asset>;
       final evmAssets = results[4] as List<Web3Asset>;
-      final dcaTxs = results[5] as List<DcaTransaction>;
-      final dcaSummary = results[6] as Map<String, DcaAggregatedSummary>;
+      List<DcaTransaction> dcaTxs = results[5] as List<DcaTransaction>;
+      Map<String, DcaAggregatedSummary> dcaSummary = results[6] as Map<String, DcaAggregatedSummary>;
       final priceMap = results[7] as Map<String, CryptoPriceData>;
+
+      // Автоматична синхронізація угод Binance Spot + Convert (FIFO)
+      if (binanceSvc.isConfigured && spotBalances.isNotEmpty) {
+        try {
+          final spotSymbols = spotBalances.keys.toList();
+          final simplePrices = priceMap.map((k, v) => MapEntry(k, v.price));
+          final binanceTranches = await binanceSvc.getSpotTradeHistoryWithFifo(
+            spotSymbols,
+            currentSpotBalances: spotBalances,
+            currentPrices: simplePrices,
+            existingTranches: dcaTxs,
+          );
+          if (binanceTranches.isNotEmpty) {
+            await _repo.syncBinanceDcaTranches(binanceTranches);
+            dcaTxs = await _repo.getDcaTransactions();
+            dcaSummary = await _repo.getAggregatedDcaSummary();
+          }
+        } catch (_) {}
+      }
 
       final futuresMargin = futuresData['totalMarginUsd'] as double? ?? 0.0;
       final futuresPnl = futuresData['unrealizedPnlUsd'] as double? ?? 0.0;
@@ -484,6 +636,18 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
           positionInChannel: pos,
           accumulatePrice: oldTpSl.accumulatePrice,
           distToAccumulatePct: double.parse(distAcc.toStringAsFixed(1)),
+          rsi: oldTpSl.rsi,
+          rsiStatus: oldTpSl.rsiStatus,
+          rsiDivergence: oldTpSl.rsiDivergence,
+          atr: oldTpSl.atr,
+          atrPct: oldTpSl.atrPct,
+          volumeRatio: oldTpSl.volumeRatio,
+          volumeStatus: oldTpSl.volumeStatus,
+          riskRewardRatio: oldTpSl.riskRewardRatio,
+          riskRewardGrade: oldTpSl.riskRewardGrade,
+          riskRewardLabel: oldTpSl.riskRewardLabel,
+          btcMarketRegime: oldTpSl.btcMarketRegime,
+          dcaLadder: oldTpSl.dcaLadder,
         );
 
         updatedHoldings.add(HoldingItem(
@@ -618,6 +782,90 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
   Future<void> deleteDcaTransaction(String id) async {
     await _repo.deleteDcaTransaction(id);
     await refreshPortfolio();
+  }
+
+  /// Ручний виклик повної синхронізації угод з Binance Spot (FIFO)
+  Future<void> syncBinanceDca() async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final settings = await _ref.read(settingsRepositoryProvider).getSettings();
+      final binanceSvc = BinanceService(
+        apiKey: settings.binanceApiKey,
+        apiSecret: settings.binanceApiSecret,
+      );
+
+      if (!binanceSvc.isConfigured) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'Вкажіть API ключ та Secret біржі Binance у Налаштуваннях.',
+        );
+        return;
+      }
+
+      final spotBalances = await binanceSvc.getSpotBalances();
+      final spotSymbols = spotBalances.keys.toList();
+      if (spotSymbols.isEmpty) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'На спотовому балансі Binance немає активних монет для синхронізації.',
+        );
+        return;
+      }
+
+      final currentPrices = {for (final h in state.overview.holdings) h.symbol.toUpperCase(): h.currentPrice};
+      final binanceTranches = await binanceSvc.getSpotTradeHistoryWithFifo(
+        spotSymbols,
+        currentSpotBalances: spotBalances,
+        currentPrices: currentPrices,
+        existingTranches: state.dcaTransactions,
+      );
+      await _repo.syncBinanceDcaTranches(binanceTranches);
+
+      await refreshPortfolio();
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Помилка синхронізації угод з Binance: $e',
+      );
+    }
+  }
+
+  /// Запуск повного AI-сканування ринку (350+ спотових пар Binance)
+  Future<void> scanMarketRadar() async {
+    state = state.copyWith(
+      isScanningMarket: true,
+      scanProgressStatus: 'Підключення до ринку Binance...',
+      scanProgress: 0.05,
+      errorMessage: null,
+    );
+
+    try {
+      final settings = await _ref.read(settingsRepositoryProvider).getSettings();
+      final groq = GroqAiService(apiKey: settings.groqApiKey);
+      final scanner = CryptoMarketScannerService(groqService: groq);
+
+      final report = await scanner.scanMarket(
+        onProgress: (status, progress) {
+          state = state.copyWith(
+            scanProgressStatus: status,
+            scanProgress: progress,
+          );
+        },
+      );
+
+      state = state.copyWith(
+        isScanningMarket: false,
+        scanProgressStatus: null,
+        scanProgress: 1.0,
+        radarReport: report,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isScanningMarket: false,
+        scanProgressStatus: null,
+        errorMessage: 'Помилка під час сканування ринку: $e',
+      );
+    }
   }
 
   @override

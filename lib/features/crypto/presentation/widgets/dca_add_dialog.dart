@@ -4,8 +4,17 @@ import '../../data/models/crypto_models.dart';
 
 class DcaAddDialog extends StatefulWidget {
   final Function(DcaTransaction) onAdd;
+  final String? initialSymbol;
+  final double? initialPrice;
+  final String? initialNotes;
 
-  const DcaAddDialog({super.key, required this.onAdd});
+  const DcaAddDialog({
+    super.key,
+    required this.onAdd,
+    this.initialSymbol,
+    this.initialPrice,
+    this.initialNotes,
+  });
 
   @override
   State<DcaAddDialog> createState() => _DcaAddDialogState();
@@ -13,14 +22,26 @@ class DcaAddDialog extends StatefulWidget {
 
 class _DcaAddDialogState extends State<DcaAddDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _symbolController = TextEditingController();
+  late final TextEditingController _symbolController;
   final _amountController = TextEditingController();
-  final _priceController = TextEditingController();
+  late final TextEditingController _priceController;
   final _feeController = TextEditingController(text: '0');
-  final _notesController = TextEditingController();
+  late final TextEditingController _notesController;
 
   String _walletType = 'MANUAL';
   final DateTime _txDate = DateTime.now();
+
+  @override
+  void initState() {
+    super.initState();
+    _symbolController = TextEditingController(text: widget.initialSymbol ?? '');
+    _priceController = TextEditingController(
+      text: (widget.initialPrice != null && widget.initialPrice! > 0)
+          ? widget.initialPrice.toString()
+          : '',
+    );
+    _notesController = TextEditingController(text: widget.initialNotes ?? '');
+  }
 
   @override
   void dispose() {
@@ -106,67 +127,74 @@ class _DcaAddDialogState extends State<DcaAddDialog> {
                   validator: (val) => val == null || val.trim().isEmpty ? 'Вкажіть символ монети' : null,
                 ),
                 const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextFormField(
-                        controller: _amountController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Кількість',
-                          prefixIcon: Icon(Icons.numbers_rounded, color: AppColors.accent),
-                        ),
-                        validator: (val) {
-                          final n = double.tryParse(val ?? '');
-                          if (n == null || n <= 0) return 'Введіть число > 0';
-                          return null;
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: TextFormField(
-                        controller: _priceController,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(
-                          labelText: 'Ціна покупки (\$)',
-                          prefixIcon: Icon(Icons.attach_money_rounded, color: AppColors.accent),
-                        ),
-                        validator: (val) {
-                          final n = double.tryParse(val ?? '');
-                          if (n == null || n <= 0) return 'Введіть ціну > 0';
-                          return null;
-                        },
-                      ),
-                    ),
-                  ],
+                TextFormField(
+                  controller: _amountController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Кількість монет',
+                    prefixIcon: Icon(Icons.numbers_rounded, color: AppColors.accent),
+                  ),
+                  validator: (val) {
+                    final n = double.tryParse(val ?? '');
+                    if (n == null || n <= 0) return 'Введіть число > 0';
+                    return null;
+                  },
+                ),
+                const SizedBox(height: 12),
+                TextFormField(
+                  controller: _priceController,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Ціна покупки (\$ за 1 шт)',
+                    prefixIcon: Icon(Icons.attach_money_rounded, color: AppColors.accent),
+                  ),
+                  validator: (val) {
+                    final n = double.tryParse(val ?? '');
+                    if (n == null || n <= 0) return 'Введіть ціну покупки > 0';
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
+                      flex: 1,
                       child: TextFormField(
                         controller: _feeController,
                         keyboardType: const TextInputType.numberWithOptions(decimal: true),
                         decoration: const InputDecoration(
                           labelText: 'Комісія (\$)',
-                          prefixIcon: Icon(Icons.receipt_long_rounded, color: AppColors.textSecondary),
+                          prefixText: '\$ ',
                         ),
                       ),
                     ),
-                    const SizedBox(width: 12),
+                    const SizedBox(width: 10),
                     Expanded(
+                      flex: 2,
                       child: DropdownButtonFormField<String>(
-                        initialValue: _walletType,
+                        value: _walletType,
+                        isExpanded: true,
                         decoration: const InputDecoration(
                           labelText: 'Гаманець',
                         ),
                         dropdownColor: AppColors.surfaceVariant,
                         items: const [
-                          DropdownMenuItem(value: 'MANUAL', child: Text('Ручний')),
-                          DropdownMenuItem(value: 'BINANCE', child: Text('Binance')),
-                          DropdownMenuItem(value: 'SOLANA', child: Text('Solana')),
-                          DropdownMenuItem(value: 'EVM', child: Text('EVM / Metamask')),
+                          DropdownMenuItem(
+                            value: 'MANUAL',
+                            child: Text('Ручний запис', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                          DropdownMenuItem(
+                            value: 'BINANCE',
+                            child: Text('Binance Spot', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                          DropdownMenuItem(
+                            value: 'SOLANA',
+                            child: Text('Solana', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                          DropdownMenuItem(
+                            value: 'EVM',
+                            child: Text('EVM / MetaMask', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
                         ],
                         onChanged: (val) {
                           if (val != null) setState(() => _walletType = val);
@@ -178,8 +206,9 @@ class _DcaAddDialogState extends State<DcaAddDialog> {
                 const SizedBox(height: 12),
                 TextFormField(
                   controller: _notesController,
+                  maxLines: 2,
                   decoration: const InputDecoration(
-                    labelText: 'Нотатки (стратегія, причина входу)',
+                    labelText: 'Нотатки (стратегія, рівні входу)',
                     prefixIcon: Icon(Icons.notes_rounded, color: AppColors.textSecondary),
                   ),
                 ),

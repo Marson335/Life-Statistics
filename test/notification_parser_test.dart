@@ -135,6 +135,58 @@ void main() {
       expect(parsed.merchant, equals('ТОВ «Технолоджі»'));
     });
 
+    test('Monobank real screenshot format: ☕ 58.00₴ Кешбек 1.... / KAFE MALENKA PEKARNIA', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: '☕ 58.00₴ Кешбек 1....',
+        content: 'KAFE MALENKA PEKARNIA\nБаланс 3 336.18₴ 🥷',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(58.0));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('KAFE MALENKA PEKARNIA'));
+    });
+
+    test('Monobank full title format: ☕ 58.00₴ Кешбек 1.16₴ / KAFE MALENKA PEKARNIA', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: '☕ 58.00₴ Кешбек 1.16₴',
+        content: 'KAFE MALENKA PEKARNIA\nБаланс 3 336.18₴ 🥷',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(58.0));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('KAFE MALENKA PEKARNIA'));
+    });
+
+    test('Monobank without cashback and without minus sign: 🛒 245.50₴ / Сільпо', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: '🛒 245.50₴',
+        content: 'Сільпо\nБаланс 3 090.68₴ 🥷',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(245.50));
+      expect(parsed.isIncome, isFalse);
+      expect(parsed.merchant, equals('Сільпо'));
+    });
+
+    test('Monobank cashback payout (income): Виплата кешбеку 150.00₴', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: 'Виплата кешбеку 150.00₴',
+        content: 'Баланс 3 486.18₴ 🥷',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(150.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('Кешбек'));
+    });
+
     test('Non-financial notification: should return null', () {
       final parsed = service.parseNotification(
         packageName: 'com.google.android.apps.messaging',

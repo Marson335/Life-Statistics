@@ -112,4 +112,64 @@ class CryptoRepository {
 
     return result;
   }
+
+  // --- СИНХРОНІЗАЦІЯ БІНАНС DCA ТРАНШІВ (FIFO) ---
+  Future<void> syncBinanceDcaTranches(List<DcaTransaction> newBinanceTranches) async {
+    final col = _dcaCollection;
+    if (col == null) return;
+
+    try {
+      // Знаходимо всі існуючі записи Binance Spot
+      final snapshot = await col.where('walletType', isEqualTo: 'Binance Spot').get();
+      final newIds = newBinanceTranches.map((t) => t.id).toSet();
+
+      // Карта існуючих документів для збереження початкової ціни першого виявлення
+      final Map<String, DcaTransaction> existingMap = {};
+      for (final doc in snapshot.docs) {
+        existingMap[doc.id] = DcaTransaction.fromMap(doc.id, doc.data() as Map<String, dynamic>);
+      }
+
+      final batch = _firestore.batch();
+
+      // Видаляємо ті, що вже повністю продані (відсутні в новому списку FIFO)
+      for (final doc in snapshot.docs) {
+        if (!newIds.contains(doc.id)) {
+          batch.delete(doc.reference);
+        }
+      }
+
+      // Додаємо або оновлюємо актуальні активні транші
+      for (final tx in newBinanceTranches) {
+        final existing = existingMap[tx.id];
+
+        // КРИТИЧНО: Якщо транш було створено на основі балансу гаманця (binance_balance_*)
+        // або в базі вже зафіксовано початкову ціну входу, ми ЗАЛИШАЄМО початкову ціну та дату!
+        // Не перезаписуємо її поточною ринковою ціною при кожному запуску!
+        DcaTransaction effectiveTx = tx;
+        if (existing != null) {
+          final isBalanceFallback = tx.id.startsWith('binance_balance_');
+          final shouldKeepOldPrice = (isBalanceFallback && existing.buyPrice > 0) ||
+              (tx.buyPrice <= 0 && existing.buyPrice > 0);
+
+          if (shouldKeepOldPrice) {
+            effectiveTx = DcaTransaction(
+              id: tx.id,
+              symbol: tx.symbol,
+              walletType: tx.walletType,
+              amount: tx.amount, // актуальний залишок монет
+              buyPrice: existing.buyPrice, // зберігаємо початкову ціну покупки!
+              fee: existing.fee > 0 ? existing.fee : tx.fee,
+              txDate: existing.txDate, // зберігаємо первинну дату фіксації!
+              notes: existing.notes.isNotEmpty ? existing.notes : tx.notes,
+            );
+          }
+        }
+
+        batch.set(col.doc(effectiveTx.id), effectiveTx.toMap());
+      }
+
+      await batch.commit();
+    } catch (_) {}
+  }
 }
+

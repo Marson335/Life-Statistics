@@ -91,7 +91,7 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
       case PortfolioChartCategory.spot:
         return 'СПОТОВИЙ БАЛАНС';
       case PortfolioChartCategory.futures:
-        return 'Ф\'ЮЧЕРСНИЙ БАЛАНС (МАРЖА)';
+        return 'Ф\'ЮЧЕРСНИЙ БАЛАНС';
       case PortfolioChartCategory.total:
         return 'ЗАГАЛЬНИЙ БАЛАНС';
     }
@@ -197,44 +197,55 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
           // 2. ВЕРХНІЙ РЯДОК: Заголовок + Око (приховати баланс) + Live + Refresh
           Row(
             children: [
-              Text(
-                _getCategoryTitle(),
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 0.8,
+              Expanded(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        _getCategoryTitle(),
+                        style: const TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: 0.6,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    GestureDetector(
+                      onTap: () => setState(() => _hideBalance = !_hideBalance),
+                      child: Icon(
+                        _hideBalance ? Icons.visibility_off_rounded : Icons.visibility_rounded,
+                        color: AppColors.textSecondary,
+                        size: 18,
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(width: 6),
-              GestureDetector(
-                onTap: () => setState(() => _hideBalance = !_hideBalance),
-                child: Icon(
-                  _hideBalance ? Icons.visibility_off_rounded : Icons.visibility_rounded,
-                  color: AppColors.textSecondary,
-                  size: 18,
-                ),
-              ),
-              const Spacer(),
+              const SizedBox(width: 8),
               if (widget.isLive) ...[
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: AppColors.greenTask.withOpacity(0.15),
+                    color: AppColors.greenTask.withValues(alpha: 0.15),
                     borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: AppColors.greenTask.withOpacity(0.3)),
+                    border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.3)),
                   ),
                   child: const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.fiber_manual_record, color: AppColors.greenTask, size: 8),
-                      SizedBox(width: 4),
+                      Icon(Icons.fiber_manual_record, color: AppColors.greenTask, size: 7),
+                      SizedBox(width: 3),
                       Text(
                         'LIVE',
                         style: TextStyle(
                           color: AppColors.greenTask,
                           fontWeight: FontWeight.bold,
-                          fontSize: 10,
+                          fontSize: 9,
                           letterSpacing: 0.5,
                         ),
                       ),
@@ -253,7 +264,7 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.accent),
                       )
-                    : const Icon(Icons.refresh_rounded, color: AppColors.textSecondary, size: 20),
+                    : const Icon(Icons.refresh_rounded, color: AppColors.textSecondary, size: 18),
                 onPressed: widget.isLoading ? null : widget.onRefresh,
                 tooltip: 'Оновити',
               ),
@@ -267,54 +278,86 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               Expanded(
+                flex: 6,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      _hideBalance ? '••••••' : '\$ ${_formatCurrency(displayBalance)}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontSize: 32,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: -0.5,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        _hideBalance ? '••••••' : '\$ ${_formatCurrency(displayBalance)}',
+                        maxLines: 1,
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 30,
+                          fontWeight: FontWeight.bold,
+                          letterSpacing: -0.5,
+                        ),
                       ),
                     ),
-                    if (displayDate != null)
-                      Text(
-                        _formatFullDate(displayDate),
-                        style: const TextStyle(color: AppColors.accentLight, fontSize: 11),
+                    if (displayDate != null) ...[
+                      const SizedBox(height: 3),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.touch_app_rounded, color: AppColors.accent, size: 12),
+                          const SizedBox(width: 4),
+                          Text(
+                            _formatFullDate(displayDate),
+                            style: const TextStyle(
+                              color: AppColors.accentLight,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
+                    ],
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    _hideBalance
-                        ? '••••'
-                        : '${isPnlPositive ? '+' : ''}\$ ${_formatCurrency(displayPnl.abs())}',
-                    style: TextStyle(
-                      color: chartColor,
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 5,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        _hideBalance
+                            ? '••••'
+                            : '${isPnlPositive ? '+' : '-'}\$ ${_formatCurrency(displayPnl.abs())}',
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: chartColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    _hideBalance
-                        ? '••••'
-                        : '${isPnlPositive ? '+' : ''}${displayPnlPct.toStringAsFixed(2)}%',
-                    style: TextStyle(
-                      color: chartColor,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
+                    const SizedBox(height: 2),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        _hideBalance
+                            ? '••••'
+                            : '${isPnlPositive ? '+' : '-'}${displayPnlPct.abs().toStringAsFixed(2)}%',
+                        maxLines: 1,
+                        style: TextStyle(
+                          color: chartColor,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ],
           ),
@@ -486,8 +529,13 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
 
     // Відступи зверху та знизу для гарного відображення графіка
     if (minY == maxY) {
-      minY = minY * 0.95;
-      maxY = maxY * 1.05;
+      if (minY == 0) {
+        minY = -1;
+        maxY = 1;
+      } else {
+        minY = minY * 0.95;
+        maxY = maxY * 1.05;
+      }
     }
     final padding = (maxY - minY) * 0.1;
     minY = minY - padding;
@@ -514,13 +562,14 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
               if (idx < 0 || idx >= points.length) return null;
               final pt = points[idx];
               final isPositive = pt.pnl >= 0;
+              final sign = isPositive ? '+' : '-';
 
               return LineTooltipItem(
                 '\$ ${_formatCurrency(pt.balance)}\n',
                 const TextStyle(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.bold),
                 children: [
                   TextSpan(
-                    text: '${isPositive ? '+' : ''}\$${_formatCurrency(pt.pnl)} (${isPositive ? '+' : ''}${pt.pnlPct.toStringAsFixed(2)}%)\n',
+                    text: '$sign\$${_formatCurrency(pt.pnl.abs())} ($sign${pt.pnlPct.abs().toStringAsFixed(2)}%)\n',
                     style: TextStyle(
                       color: isPositive ? AppColors.greenTask : AppColors.redTask,
                       fontSize: 11,
@@ -537,14 +586,24 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
           },
         ),
         touchCallback: (event, touchResponse) {
-          if (event is FlTapUpEvent || event is FlPanEndEvent) {
-            setState(() => _touchedIndex = null);
+          if (event is FlTapUpEvent ||
+              event is FlPanEndEvent ||
+              event is FlPointerExitEvent ||
+              event is FlTapCancelEvent ||
+              event is FlPanCancelEvent) {
+            if (_touchedIndex != null) {
+              setState(() => _touchedIndex = null);
+            }
           } else if (touchResponse != null &&
               touchResponse.lineBarSpots != null &&
               touchResponse.lineBarSpots!.isNotEmpty) {
             final spotIdx = touchResponse.lineBarSpots!.first.spotIndex;
-            if (_touchedIndex != spotIdx) {
+            if (spotIdx >= 0 && spotIdx < points.length && _touchedIndex != spotIdx) {
               setState(() => _touchedIndex = spotIdx);
+            }
+          } else {
+            if (_touchedIndex != null) {
+              setState(() => _touchedIndex = null);
             }
           }
         },
@@ -575,12 +634,16 @@ class _CryptoRankChartCardState extends State<CryptoRankChartCard> {
   }
 
   String _formatCurrency(double val) {
-    if (val >= 1000) {
-      return NumberFormat('#,##0.00', 'en_US').format(val);
-    } else if (val >= 1) {
-      return val.toStringAsFixed(2);
+    final absVal = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (absVal >= 1000) {
+      return '$sign${NumberFormat('#,##0.00', 'en_US').format(absVal)}';
+    } else if (absVal >= 1) {
+      return '$sign${absVal.toStringAsFixed(2)}';
+    } else if (absVal > 0) {
+      return '$sign${absVal.toStringAsFixed(4)}';
     } else {
-      return val.toStringAsFixed(4);
+      return '0.00';
     }
   }
 

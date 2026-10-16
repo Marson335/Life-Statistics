@@ -101,68 +101,143 @@ public class NotificationListener extends NotificationListenerService {
         }
     }
 
+    private static final java.util.Set<String> seenUnredactedKeys = new java.util.HashSet<>();
+    private long lastActiveScanTime = 0;
+
+    public static boolean isRedactedContent(String title, String content) {
+        String combined = ((title != null ? title : "") + " " + (content != null ? content : "")).toLowerCase();
+        return combined.contains("чутливий вміст") ||
+               combined.contains("sensitive notification") ||
+               combined.contains("скрыто содержимое") ||
+               combined.contains("вміст сповіщення приховано") ||
+               combined.contains("content hidden");
+    }
+
     public static String extractNotificationTitle(Bundle extras) {
         if (extras == null) return null;
-        CharSequence title = extras.getCharSequence(Notification.EXTRA_TITLE_BIG);
-        if (title == null || title.length() == 0) {
-            title = extras.getCharSequence(Notification.EXTRA_TITLE);
+        CharSequence title = extras.getCharSequence(Notification.EXTRA_TITLE);
+        CharSequence titleBig = extras.getCharSequence(Notification.EXTRA_TITLE_BIG);
+
+        String t1 = title != null ? title.toString().trim() : "";
+        String t2 = titleBig != null ? titleBig.toString().trim() : "";
+
+        if (!t2.isEmpty() && (t1.isEmpty() || t2.contains(t1))) {
+            return t2;
         }
-        return title != null ? title.toString().trim() : null;
+        if (!t1.isEmpty() && (t2.isEmpty() || t1.contains(t2))) {
+            return t1;
+        }
+        if (!t1.isEmpty() && !t2.isEmpty()) {
+            return t1 + " " + t2;
+        }
+        return null;
     }
 
     public static String extractNotificationContent(Bundle extras) {
         if (extras == null) return null;
 
-        // 1. Check EXTRA_BIG_TEXT (used by BigTextStyle for full details like Monobank, Privat24, Google Wallet)
-        CharSequence bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT);
-        if (bigText != null && bigText.length() > 0) {
-            return bigText.toString().trim();
-        }
+        StringBuilder result = new StringBuilder();
 
-        // 2. Check EXTRA_TEXT_LINES (used by InboxStyle)
-        CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
-        if (lines != null && lines.length > 0) {
-            StringBuilder sb = new StringBuilder();
-            for (CharSequence line : lines) {
-                if (line != null && line.length() > 0) {
-                    if (sb.length() > 0) sb.append("\n");
-                    sb.append(line);
-                }
-            }
-            if (sb.length() > 0) return sb.toString().trim();
-        }
-
-        // 3. Check EXTRA_TEXT (standard single line body)
+        // 1. Standard EXTRA_TEXT
         CharSequence text = extras.getCharSequence(Notification.EXTRA_TEXT);
         if (text != null && text.length() > 0) {
-            return text.toString().trim();
+            result.append(text.toString().trim());
         }
 
-        // 4. Check EXTRA_SUB_TEXT
+        // 2. EXTRA_BIG_TEXT (used by BigTextStyle for full details like Monobank, Privat24, Google Wallet)
+        CharSequence bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT);
+        if (bigText != null && bigText.length() > 0) {
+            String bigStr = bigText.toString().trim();
+            String current = result.toString();
+            if (current.isEmpty()) {
+                result.append(bigStr);
+            } else if (bigStr.contains(current)) {
+                result.setLength(0);
+                result.append(bigStr);
+            } else if (!current.contains(bigStr)) {
+                result.append("\n").append(bigStr);
+            }
+        }
+
+        // 3. EXTRA_TEXT_LINES (used by InboxStyle)
+        CharSequence[] lines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
+        if (lines != null && lines.length > 0) {
+            for (CharSequence line : lines) {
+                if (line != null && line.length() > 0) {
+                    String lineStr = line.toString().trim();
+                    if (!result.toString().contains(lineStr)) {
+                        if (result.length() > 0) result.append("\n");
+                        result.append(lineStr);
+                    }
+                }
+            }
+        }
+
+        // 4. EXTRA_SUB_TEXT
         CharSequence subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT);
         if (subText != null && subText.length() > 0) {
-            return subText.toString().trim();
+            String subStr = subText.toString().trim();
+            if (!result.toString().contains(subStr)) {
+                if (result.length() > 0) result.append("\n");
+                result.append(subStr);
+            }
         }
 
-        // 5. Check EXTRA_SUMMARY_TEXT
+        // 5. EXTRA_SUMMARY_TEXT
         CharSequence summaryText = extras.getCharSequence(Notification.EXTRA_SUMMARY_TEXT);
-        if (summaryText != null && summaryText.length() > 0) {
-            return summaryText.toString().trim();
+        if (result.length() == 0 && summaryText != null && summaryText.length() > 0) {
+            result.append(summaryText.toString().trim());
         }
 
-        return null;
+        return result.length() > 0 ? result.toString().trim() : null;
     }
 
-    public void saveToPendingQueue(String packageName, String title, String content, int id, long postTime) {
+    public boolean saveToPendingQueue(String packageName, String title, String content, int id, long postTime) {
         try {
+            if (packageName != null && (packageName.equals(getPackageName()) || packageName.contains("life_statistics"))) {
+                return false;
+            }
+            if (isRedactedContent(title, content)) {
+                return false;
+            }
+
+            String safePkg = packageName != null ? packageName : "";
+            String safeTitle = title != null ? title : "";
+            String safeContent = content != null ? content : "";
+            if (safeTitle.isEmpty() && safeContent.isEmpty()) {
+                return false;
+            }
+
+            String memKey = safePkg + "|" + id + "|" + postTime + "|" + safeTitle + "|" + safeContent;
+            if (seenUnredactedKeys.contains(memKey)) {
+                return false;
+            }
+            seenUnredactedKeys.add(memKey);
+            if (seenUnredactedKeys.size() > 300) {
+                seenUnredactedKeys.clear();
+                seenUnredactedKeys.add(memKey);
+            }
+
             SharedPreferences sp = getApplicationContext().getSharedPreferences("notification_queue_prefs", Context.MODE_PRIVATE);
             String currentQueue = sp.getString("pending_notifications_json", "[]");
             JSONArray array = new JSONArray(currentQueue);
 
+            // Avoid duplicate entry in JSON queue
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject existing = array.optJSONObject(i);
+                if (existing != null &&
+                    safePkg.equals(existing.optString("packageName")) &&
+                    id == existing.optInt("id") &&
+                    safeTitle.equals(existing.optString("title")) &&
+                    safeContent.equals(existing.optString("content"))) {
+                    return false;
+                }
+            }
+
             JSONObject obj = new JSONObject();
-            obj.put("packageName", packageName != null ? packageName : "");
-            obj.put("title", title != null ? title : "");
-            obj.put("content", content != null ? content : "");
+            obj.put("packageName", safePkg);
+            obj.put("title", safeTitle);
+            obj.put("content", safeContent);
             obj.put("id", id);
             obj.put("postTime", postTime);
 
@@ -178,9 +253,52 @@ public class NotificationListener extends NotificationListenerService {
             }
 
             sp.edit().putString("pending_notifications_json", array.toString()).apply();
-            Log.i(TAG, "📥 Saved notification to native queue: " + packageName + " | " + title + " | " + content);
+            Log.i(TAG, "📥 Saved notification to native queue: " + safePkg + " | " + safeTitle + " | " + safeContent);
+            return true;
         } catch (Exception e) {
             Log.e(TAG, "Error saving to pending queue: " + e.getMessage());
+            return false;
+        }
+    }
+
+    @RequiresApi(api = VERSION_CODES.KITKAT)
+    private void scanAndQueueUnredactedActiveNotifications() {
+        try {
+            StatusBarNotification[] active = getActiveNotifications();
+            if (active == null) return;
+            for (StatusBarNotification sbn : active) {
+                if (sbn == null) continue;
+                String pkg = sbn.getPackageName();
+                if (pkg != null && (pkg.equals(getPackageName()) || pkg.contains("life_statistics"))) {
+                    continue;
+                }
+                Notification n = sbn.getNotification();
+                if (n == null || n.extras == null) continue;
+                String title = extractNotificationTitle(n.extras);
+                String content = extractNotificationContent(n.extras);
+                if ((title == null || title.isEmpty()) && (content == null || content.isEmpty()) && n.tickerText != null) {
+                    content = n.tickerText.toString().trim();
+                }
+                if (!isRedactedContent(title, content) && (title != null || content != null)) {
+                    boolean newlyAdded = saveToPendingQueue(pkg, title, content, sbn.getId(), sbn.getPostTime());
+                    if (newlyAdded) {
+                        handleNotification(sbn, false);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error in scanAndQueueUnredactedActiveNotifications: " + e.getMessage());
+        }
+    }
+
+    @RequiresApi(api = VERSION_CODES.LOLLIPOP)
+    @Override
+    public void onNotificationRankingUpdate(RankingMap rankingMap) {
+        super.onNotificationRankingUpdate(rankingMap);
+        long now = System.currentTimeMillis();
+        if (now - lastActiveScanTime > 1500) {
+            lastActiveScanTime = now;
+            scanAndQueueUnredactedActiveNotifications();
         }
     }
 
@@ -202,94 +320,106 @@ public class NotificationListener extends NotificationListenerService {
     }
 
     @RequiresApi(api = VERSION_CODES.KITKAT)
-private void handleNotification(StatusBarNotification notification, boolean isRemoved) {
-    try {
-        String packageName = notification.getPackageName();
-        Bundle extras = notification.getNotification().extras;
-        boolean isOngoing = (notification.getNotification().flags & Notification.FLAG_ONGOING_EVENT) != 0;
-        byte[] appIcon = getAppIcon(packageName);
-        byte[] largeIcon = null;
-        Action action = NotificationUtils.getQuickReplyAction(notification.getNotification(), packageName);
-
-        if (Build.VERSION.SDK_INT >= VERSION_CODES.M) {
-            largeIcon = getNotificationLargeIcon(getApplicationContext(), notification.getNotification());
-        }
-
-        Intent intent = new Intent(NotificationConstants.INTENT);
-        intent.setPackage(getPackageName());
-        intent.putExtra(NotificationConstants.PACKAGE_NAME, packageName);
-        intent.putExtra(NotificationConstants.ID, notification.getId());
-        intent.putExtra(NotificationConstants.CAN_REPLY, action != null);
-        intent.putExtra(NotificationConstants.IS_ONGOING, isOngoing);
-
-        if (NotificationUtils.getQuickReplyAction(notification.getNotification(), packageName) != null) {
-            cachedNotifications.put(notification.getId(), action);
-        }
-
-        intent.putExtra(NotificationConstants.NOTIFICATION_TIME, notification.getPostTime());
-        intent.putExtra(NotificationConstants.NOTIFICATIONS_ICON, appIcon);
-        intent.putExtra(NotificationConstants.NOTIFICATIONS_LARGE_ICON, largeIcon);
-
-        if (extras != null) {
-            String safeTitle = extractNotificationTitle(extras);
-            String safeText = extractNotificationContent(extras);
-
-            if (safeTitle != null && safeTitle.length() > 200) {
-                safeTitle = safeTitle.substring(0, 200);
+    private void handleNotification(StatusBarNotification notification, boolean isRemoved) {
+        try {
+            if (notification == null) return;
+            String packageName = notification.getPackageName();
+            if (packageName != null && (packageName.equals(getPackageName()) || packageName.contains("life_statistics"))) {
+                return;
             }
-            if (safeText != null && safeText.length() > 2000) {
-                safeText = safeText.substring(0, 2000);
+            Notification notif = notification.getNotification();
+            if (notif == null) return;
+            Bundle extras = notif.extras;
+            boolean isOngoing = (notif.flags & Notification.FLAG_ONGOING_EVENT) != 0;
+            byte[] appIcon = getAppIcon(packageName);
+            byte[] largeIcon = null;
+            Action action = NotificationUtils.getQuickReplyAction(notif, packageName);
+
+            if (Build.VERSION.SDK_INT >= VERSION_CODES.M) {
+                largeIcon = getNotificationLargeIcon(getApplicationContext(), notif);
             }
 
-            intent.putExtra(NotificationConstants.NOTIFICATION_TITLE, safeTitle);
-            intent.putExtra(NotificationConstants.NOTIFICATION_CONTENT, safeText);
-            intent.putExtra(NotificationConstants.IS_REMOVED, isRemoved);
+            Intent intent = new Intent(NotificationConstants.INTENT);
+            intent.setPackage(getPackageName());
+            intent.putExtra(NotificationConstants.PACKAGE_NAME, packageName);
+            intent.putExtra(NotificationConstants.ID, notification.getId());
+            intent.putExtra(NotificationConstants.CAN_REPLY, action != null);
+            intent.putExtra(NotificationConstants.IS_ONGOING, isOngoing);
 
-            if (!isRemoved && (safeTitle != null || safeText != null)) {
-                saveToPendingQueue(packageName, safeTitle, safeText, notification.getId(), notification.getPostTime());
+            if (action != null) {
+                cachedNotifications.put(notification.getId(), action);
             }
 
-            // Solo incluir imagen si la notificación no es demasiado grande
-            boolean containsImage = extras.containsKey(Notification.EXTRA_PICTURE);
-            intent.putExtra(NotificationConstants.HAVE_EXTRA_PICTURE, containsImage);
+            intent.putExtra(NotificationConstants.NOTIFICATION_TIME, notification.getPostTime());
+            intent.putExtra(NotificationConstants.NOTIFICATIONS_ICON, appIcon);
+            intent.putExtra(NotificationConstants.NOTIFICATIONS_LARGE_ICON, largeIcon);
 
-            if (containsImage) {
-                try {
-                    Bitmap bmp = (Bitmap) extras.get(Notification.EXTRA_PICTURE);
-                    if (bmp != null) {
-                        // Reducir tamaño de imagen si es muy grande
-                        Bitmap scaledBmp = bmp;
-                        if (bmp.getWidth() > 300 || bmp.getHeight() > 300) {
-                            int maxSize = 300;
-                            float ratio = Math.min(
-                                (float) maxSize / bmp.getWidth(),
-                                (float) maxSize / bmp.getHeight()
-                            );
-                            int width = Math.round(bmp.getWidth() * ratio);
-                            int height = Math.round(bmp.getHeight() * ratio);
-                            scaledBmp = Bitmap.createScaledBitmap(bmp, width, height, true);
+            if (extras != null) {
+                String safeTitle = extractNotificationTitle(extras);
+                String safeText = extractNotificationContent(extras);
+
+                if ((safeTitle == null || safeTitle.isEmpty()) && (safeText == null || safeText.isEmpty()) && notif.tickerText != null) {
+                    safeText = notif.tickerText.toString().trim();
+                }
+
+                if (safeTitle != null && safeTitle.length() > 200) {
+                    safeTitle = safeTitle.substring(0, 200);
+                }
+                if (safeText != null && safeText.length() > 2000) {
+                    safeText = safeText.substring(0, 2000);
+                }
+
+                intent.putExtra(NotificationConstants.NOTIFICATION_TITLE, safeTitle);
+                intent.putExtra(NotificationConstants.NOTIFICATION_CONTENT, safeText);
+                intent.putExtra(NotificationConstants.IS_REMOVED, isRemoved);
+
+                // Save to pending queue both on post and on remove (if unredacted),
+                // so notifications that arrived while locked and were dismissed after unlocking are still captured!
+                if ((safeTitle != null || safeText != null) && !isRedactedContent(safeTitle, safeText)) {
+                    saveToPendingQueue(packageName, safeTitle, safeText, notification.getId(), notification.getPostTime());
+                }
+
+                // Solo incluir imagen si la notificación no es demasiado grande
+                boolean containsImage = extras.containsKey(Notification.EXTRA_PICTURE);
+                intent.putExtra(NotificationConstants.HAVE_EXTRA_PICTURE, containsImage);
+
+                if (containsImage) {
+                    try {
+                        Bitmap bmp = (Bitmap) extras.get(Notification.EXTRA_PICTURE);
+                        if (bmp != null) {
+                            // Reducir tamaño de imagen si es muy grande
+                            Bitmap scaledBmp = bmp;
+                            if (bmp.getWidth() > 300 || bmp.getHeight() > 300) {
+                                int maxSize = 300;
+                                float ratio = Math.min(
+                                    (float) maxSize / bmp.getWidth(),
+                                    (float) maxSize / bmp.getHeight()
+                                );
+                                int width = Math.round(bmp.getWidth() * ratio);
+                                int height = Math.round(bmp.getHeight() * ratio);
+                                scaledBmp = Bitmap.createScaledBitmap(bmp, width, height, true);
+                            }
+
+                            ByteArrayOutputStream stream = new ByteArrayOutputStream();
+                            scaledBmp.compress(Bitmap.CompressFormat.JPEG, 70, stream);
+                            byte[] imageData = stream.toByteArray();
+
+                            // Solo incluir si no es demasiado grande
+                            if (imageData.length < 200000) { // 200KB límite
+                                intent.putExtra(NotificationConstants.EXTRAS_PICTURE, imageData);
+                            }
                         }
-
-                        ByteArrayOutputStream stream = new ByteArrayOutputStream();
-                        scaledBmp.compress(Bitmap.CompressFormat.JPEG, 70, stream);
-                        byte[] imageData = stream.toByteArray();
-
-                        // Solo incluir si no es demasiado grande
-                        if (imageData.length < 200000) { // 200KB límite
-                            intent.putExtra(NotificationConstants.EXTRAS_PICTURE, imageData);
-                        }
+                    } catch (Exception e) {
+                        // Ignorar errores de procesamiento de imagen
+                        Log.e("NotificationListener", "Error procesando imagen: " + e.getMessage());
                     }
-                } catch (Exception e) {
-                    // Ignorar errores de procesamiento de imagen
-                    Log.e("NotificationListener", "Error procesando imagen: " + e.getMessage());
                 }
             }
+            sendBroadcast(intent);
+        } catch (Exception e) {
+            Log.e("NotificationListener", "Error en handleNotification: " + e.getMessage());
         }
-        sendBroadcast(intent);
-    } catch (Exception e) {
-        Log.e("NotificationListener", "Error en handleNotification: " + e.getMessage());
     }
-}
 
     public byte[] getAppIcon(String packageName) {
         try {
@@ -330,16 +460,29 @@ private void handleNotification(StatusBarNotification notification, boolean isRe
     public List<Map<String, Object>> getActiveNotificationData() {
         List<Map<String, Object>> notificationList = new ArrayList<>();
         StatusBarNotification[] activeNotifications = getActiveNotifications();
+        if (activeNotifications == null) return notificationList;
 
         for (StatusBarNotification sbn : activeNotifications) {
+            if (sbn == null) continue;
+            String pkg = sbn.getPackageName();
+            if (pkg != null && (pkg.equals(getPackageName()) || pkg.contains("life_statistics"))) {
+                continue;
+            }
             Map<String, Object> notifyData = new HashMap<>();
             Notification notification = sbn.getNotification();
+            if (notification == null) continue;
             Bundle extras = notification.extras;
 
+            String title = extractNotificationTitle(extras);
+            String content = extractNotificationContent(extras);
+            if ((title == null || title.isEmpty()) && (content == null || content.isEmpty()) && notification.tickerText != null) {
+                content = notification.tickerText.toString().trim();
+            }
+
             notifyData.put("id", sbn.getId());
-            notifyData.put("packageName", sbn.getPackageName());
-            notifyData.put("title", extractNotificationTitle(extras));
-            notifyData.put("content", extractNotificationContent(extras));
+            notifyData.put("packageName", pkg);
+            notifyData.put("title", title);
+            notifyData.put("content", content);
             boolean isOngoing = (notification.flags & Notification.FLAG_ONGOING_EVENT) != 0;
             notifyData.put("onGoing", isOngoing);
             notifyData.put("postTime", sbn.getPostTime());

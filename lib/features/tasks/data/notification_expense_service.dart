@@ -183,6 +183,8 @@ class NotificationExpenseService {
     final hasPerm = await isPermissionGranted();
     if (!hasPerm) return [];
 
+    await _initProcessedKeys();
+
     final initialCount = diagnosticLogs.length;
 
     // 1. Process notifications stored in background native queue while Flutter was asleep
@@ -190,21 +192,27 @@ class NotificationExpenseService {
       final pending = await NotificationListenerService.getPendingNotifications();
       if (pending.isNotEmpty) {
         print('[NotificationExpenseService] 📬 Processing ${pending.length} pending background notifications...');
+        bool anyPostponedForAuth = false;
         for (final item in pending) {
           final pkg = (item['packageName'] ?? '').toString();
           final title = (item['title'] ?? '').toString();
           final content = (item['content'] ?? '').toString();
           final id = item['id'] is int ? item['id'] as int : 0;
           final postTime = item['postTime'] is int ? item['postTime'] as int : 0;
-          await _handleRawNotification(
+          final completed = await _handleRawNotification(
             packageName: pkg,
             title: title,
             content: content,
             id: id,
             timestamp: postTime,
           );
+          if (!completed) {
+            anyPostponedForAuth = true;
+          }
         }
-        await NotificationListenerService.clearPendingNotifications();
+        if (!anyPostponedForAuth) {
+          await NotificationListenerService.clearPendingNotifications();
+        }
       }
     } catch (e) {
       print('[NotificationExpenseService] ⚠️ Error retrieving pending notifications: $e');
@@ -262,7 +270,8 @@ class NotificationExpenseService {
     );
   }
 
-  Future<void> _handleRawNotification({
+  /// Returns `false` only if a valid financial transaction was parsed but postponed because user is not yet authenticated.
+  Future<bool> _handleRawNotification({
     required String packageName,
     required String title,
     required String content,
@@ -270,14 +279,35 @@ class NotificationExpenseService {
     required int timestamp,
     bool isRemoved = false,
   }) async {
-    if (isRemoved) return;
-    if (title.isEmpty && content.isEmpty) return;
+    if (packageName.contains('life_statistics')) return true;
+    if (title.isEmpty && content.isEmpty) return true;
+
+    final lowerCheck = '$title $content'.toLowerCase();
+    if (lowerCheck.contains('чутливий вміст') ||
+        lowerCheck.contains('sensitive notification') ||
+        lowerCheck.contains('скрыто содержимое') ||
+        lowerCheck.contains('content hidden')) {
+      return true;
+    }
+
+    await _initProcessedKeys();
+
+    // Check unique key for this notification to avoid re-processing identical notification
+    final notiKey = '${packageName}_${id}_${timestamp}_${title}_$content';
+    if (_processedNotificationKeys.contains(notiKey)) {
+      return true;
+    }
 
     final parsed = parseNotification(
       packageName: packageName,
       title: title,
       content: content,
     );
+
+    // If this is a notification removal event and not a financial transaction, ignore quietly
+    if (isRemoved && parsed == null) {
+      return true;
+    }
 
     // Record diagnostic entry for UI inspection
     final diagnostic = NotificationDiagnosticEntry(
@@ -295,14 +325,8 @@ class NotificationExpenseService {
       diagnosticLogs.removeLast();
     }
 
-    // Check unique key for this notification to avoid re-processing identical notification
-    final notiKey = '${packageName}_${id}_${timestamp}_${title}_$content';
-    if (_processedNotificationKeys.contains(notiKey)) {
-      return;
-    }
-
     print(
-        '[NotificationExpenseService] 📥 Received from "$packageName": title="$title", content="$content"');
+        '[NotificationExpenseService] 📥 Received from "$packageName": title="$title", content="$content" (removed=$isRemoved)');
 
     if (parsed != null) {
       print(
@@ -311,8 +335,11 @@ class NotificationExpenseService {
       final success = await _processTransaction(parsed);
       if (success) {
         await _saveProcessedKey(notiKey);
+        return true;
       }
+      return false;
     }
+    return true;
   }
 
   ParsedTransaction? parseNotification({
@@ -320,11 +347,20 @@ class NotificationExpenseService {
     required String title,
     required String content,
   }) {
+    if (packageName.contains('life_statistics')) return null;
+
     // 1. Normalize spaces, non-breaking spaces (\u00A0), en-dash (\u2013), em-dash (\u2014), minus (\u2212)
     final cleanTitle = title.replaceAll('\u00A0', ' ').trim();
     final cleanContent = content.replaceAll('\u00A0', ' ').trim();
     final combinedText = '$cleanTitle $cleanContent';
     final lowerCombined = combinedText.toLowerCase();
+
+    // Ignore Android lockscreen redacted placeholders
+    if (lowerCombined.contains('чутливий вміст') ||
+        lowerCombined.contains('sensitive notification') ||
+        lowerCombined.contains('скрыто содержимое')) {
+      return null;
+    }
 
     // 2. Known banking & payment applications
     final knownBankPackages = [
@@ -365,6 +401,7 @@ class NotificationExpenseService {
       'платіж',
       'комуналка',
       'поповнення мобільного',
+      'кешбек', // In Monobank, "☕ 58.00₴ Кешбек 1.16₴" is a purchase with cashback reward
       'oplata',
       'kupivlya',
       'pokupka',
@@ -377,13 +414,16 @@ class NotificationExpenseService {
 
     final incomeKeywords = [
       'зарахування',
-      'поповнення',
+      'поповнення картки',
+      'поповнення рахунку',
       'надходження',
       'зарплата',
       'зарплат',
       'переказ від',
-      'кешбек',
-      'cashback',
+      'від:',
+      'виплата кешбеку',
+      'виведення кешбеку',
+      'зарахування кешбеку',
       'received',
       'top-up',
       'credited',
@@ -393,12 +433,18 @@ class NotificationExpenseService {
       'popovnennia',
     ];
 
+    // Check standalone "поповнення" only when not followed by "мобільного"
+    final hasStandaloneTopUp = lowerCombined.contains('поповнення') &&
+        !lowerCombined.contains('поповнення мобільного');
+
     final hasExpenseKeyword =
         expenseKeywords.any((kw) => lowerCombined.contains(kw));
     final hasIncomeKeyword =
-        incomeKeywords.any((kw) => lowerCombined.contains(kw));
+        incomeKeywords.any((kw) => lowerCombined.contains(kw)) ||
+            hasStandaloneTopUp;
 
-    final hasCurrency = RegExp(r'(?:₴|грн|uah|\$|€)', caseSensitive: false).hasMatch(combinedText);
+    final hasCurrency =
+        RegExp(r'(?:₴|грн|uah|\$|€)', caseSensitive: false).hasMatch(combinedText);
     final hasCardOrBankIndicator = lowerCombined.contains('monobank') ||
         lowerCombined.contains('privat') ||
         lowerCombined.contains('приват') ||
@@ -408,6 +454,7 @@ class NotificationExpenseService {
         lowerCombined.contains('card') ||
         lowerCombined.contains('пумб') ||
         lowerCombined.contains('ощад') ||
+        lowerCombined.contains('баланс') ||
         RegExp(r'(?:••|\*\*|\*)\s*\d{2,4}').hasMatch(combinedText);
 
     // Must be a recognized bank app OR contain financial keywords OR (has currency + card/bank indicator)
@@ -421,6 +468,13 @@ class NotificationExpenseService {
     // 3. Determine direction (Income vs Expense)
     bool isIncome = false;
     if (hasIncomeKeyword && !hasExpenseKeyword) {
+      isIncome = true;
+    } else if (hasIncomeKeyword &&
+        (lowerCombined.contains('виплата кешбеку') ||
+            lowerCombined.contains('виведення кешбеку') ||
+            lowerCombined.contains('зарахування кешбеку') ||
+            lowerCombined.contains('зарахування') ||
+            hasStandaloneTopUp)) {
       isIncome = true;
     } else if (RegExp(r'\+\s*\d+').hasMatch(cleanContent) ||
         RegExp(r'\+\s*\d+').hasMatch(cleanTitle)) {
@@ -439,12 +493,12 @@ class NotificationExpenseService {
             caseSensitive: false))
         .first
         .trim();
-    final searchBody = '$cleanTitle $textBeforeBalance';
+    final searchBody = '$cleanTitle\n$textBeforeBalance';
 
     // 5. Extract Amount
     double? amount;
 
-    // Pattern A: Amount followed by currency: "-150 ₴", "150,00 ₴", "-21.3₴", "150.00UAH", "204,30 грн"
+    // Pattern A: Amount followed by currency: "-150 ₴", "58.00₴", "150,00 ₴", "-21.3₴", "150.00UAH", "204,30 грн"
     final regexA = RegExp(
       r'(?:^|[^\w])(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:₴|грн|uah|\$|€)',
       caseSensitive: false,
@@ -506,12 +560,15 @@ class NotificationExpenseService {
 
     if (isIncome) {
       final senderMatch = RegExp(
-        r'(?:від|from)\s+([^,.\n]+)',
+        r'(?:від|from)\s*:?\s*([^,.\n]+)',
         caseSensitive: false,
       ).firstMatch(cleanContent);
       if (senderMatch != null) {
         var cand = senderMatch.group(1)?.trim();
-        cand = cand?.split(RegExp(r'\s*(?:баланс|картк|\.\.\.)', caseSensitive: false)).first.trim();
+        cand = cand
+            ?.split(RegExp(r'\s*(?:баланс|картк|\.\.\.)', caseSensitive: false))
+            .first
+            .trim();
         merchant = cand;
       }
       if (merchant == null && lowerCombined.contains('зарплат')) {
@@ -520,29 +577,45 @@ class NotificationExpenseService {
         merchant = 'Кешбек';
       }
     } else {
-      // 1) Explicit "у / в / at / in [Merchant]" (e.g. "Оплата 520.50 ₴ у McDonald's" or "у Сільпо")
+      // 1) Explicit "[Action/Currency] у / в / at / in [Merchant]" (e.g. "Оплата 520.50 ₴ у McDonald's" or "Покупка в Сільпо")
       final merchantMatch = RegExp(
-        r'(?:у|в|at|in)\s+([^,.\n]+)',
+        r'(?:оплата|покупка|купівля|списання|платіж|₴|грн|uah|\$|€)\s+(?:у|в|at|in)\s+([^,.\n]+)',
         caseSensitive: false,
       ).firstMatch(textBeforeBalance);
       if (merchantMatch != null) {
         String cand = merchantMatch.group(1)?.trim() ?? '';
-        cand = cand.split(RegExp(r'\s*(?:картк|card|баланс|\*|\.\.\.)', caseSensitive: false)).first.trim();
+        cand = cand
+            .split(RegExp(r'\s*(?:картк|card|баланс|\*|\.\.\.)',
+                caseSensitive: false))
+            .first
+            .trim();
         cand = cand.replaceAll(RegExp(r'^[•–\-—,\s]+|[•–\-—,\s]+$'), '').trim();
         if (cand.isNotEmpty && !cand.toLowerCase().contains('баланс')) {
           merchant = cand;
         }
       }
 
-      // 2) PRIVAT24: e.g. "Privat24: -21.3₴ Комуналка та Інтернет" or "Privat24: -269₴ Платежі за реквізитами"
-      if (merchant == null && (packageName.contains('privat') || cleanContent.startsWith('Privat24:') || cleanTitle.contains('Privat24'))) {
+      // 2) PRIVAT24: e.g. "Privat24: -21.3₴ Комуналка та Інтернет" or "-619₴ Платежі за реквізитами"
+      if (merchant == null &&
+          (packageName.contains('privat') ||
+              cleanContent.startsWith('Privat24:') ||
+              cleanTitle.contains('Privat24'))) {
         final clean = textBeforeBalance
             .replaceFirst(RegExp(r'^Privat24\s*:\s*', caseSensitive: false), '')
-            .replaceFirst(RegExp(r'^[+−\-–—]?\s*\d+(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\s]*', caseSensitive: false), '')
+            .replaceFirst(
+                RegExp(
+                    r'^[+−\-–—]?\s*\d+(?:[\s]\d{3})*(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\s]*',
+                    caseSensitive: false),
+                '')
             .trim();
 
         if (clean.isNotEmpty) {
-          String cand = clean.split(RegExp(r'\s*(?:Картка|Karta|\*|\.\.\.)', caseSensitive: false)).first.trim();
+          final firstLine = clean.split('\n').first.trim();
+          String cand = firstLine
+              .split(RegExp(r'\s*(?:Картка|Karta|\*|\.\.\.)',
+                  caseSensitive: false))
+              .first
+              .trim();
           cand = cand.replaceAll(RegExp(r'^[•–\-,\s]+|[•–\-,\s]+$'), '').trim();
           if (cand.isNotEmpty && !cand.toLowerCase().contains('баланс')) {
             merchant = cand;
@@ -550,12 +623,66 @@ class NotificationExpenseService {
         }
       }
 
-      // 3) GOOGLE WALLET: Title is the merchant (e.g. "MAGAZYN 0065", "KAFE MALENKA PE...", "Zootovari")
-      if (merchant == null && (packageName.contains('wallet') || packageName.contains('gms') || cleanContent.contains('••') || cleanContent.contains('monobank') || cleanTitle.contains('Google'))) {
+      // 3) MONOBANK: e.g. Title="☕ 58.00₴ Кешбек 1...." Body="KAFE MALENKA PEKARNIA\nБаланс 3 336.18₴ 🥷"
+      // or Body="-150 ₴\nСільпо\nБаланс..."
+      if (merchant == null &&
+          (packageName.contains('mono') ||
+              lowerCombined.contains('кешбек') ||
+              lowerCombined.contains('monobank'))) {
+        final lines = textBeforeBalance.split('\n');
+        for (final rawLine in lines) {
+          var line = rawLine
+              .replaceFirst(
+                  RegExp(r'^monobank\s*:\s*', caseSensitive: false), '')
+              .replaceAll(
+                  RegExp(
+                      r'кешбек\s*\d*(?:[.,]\d+)?\s*(?:₴|грн|uah|%|\.{2,})?',
+                      caseSensitive: false),
+                  '')
+              .replaceAll(
+                  RegExp(
+                      r'[+−\-–—]?\s*\d+(?:[\s]\d{3})*(?:[.,]\d{1,2})?\s*(?:₴|грн|uah|\$|€)',
+                      caseSensitive: false),
+                  '')
+              .replaceFirst(
+                  RegExp(r'^(?:оплата|списання|купівля|покупка)\s*:?\s*',
+                      caseSensitive: false),
+                  '')
+              .trim();
+
+          // Strip leading/trailing emojis, bullets, dashes, dots
+          line = line
+              .replaceAll(
+                  RegExp(r'^[^\p{L}\p{N}]+|[^\p{L}\p{N})]+$', unicode: true),
+                  '')
+              .trim();
+
+          final lowerLine = line.toLowerCase();
+          if (line.isNotEmpty &&
+              !lowerLine.contains('баланс') &&
+              !lowerLine.contains('monobank') &&
+              !lowerLine.contains('карткою') &&
+              !lowerLine.contains('mastercard') &&
+              !lowerLine.contains('visa') &&
+              !RegExp(r'^\d+$').hasMatch(line)) {
+            merchant = line;
+            break;
+          }
+        }
+      }
+
+      // 4) GOOGLE WALLET: Title is the merchant (e.g. "MAGAZYN 0065", "KAFE MALENKA PE...", "Zootovari")
+      if (merchant == null &&
+          (packageName.contains('wallet') ||
+              packageName.contains('gms') ||
+              cleanContent.contains('••') ||
+              cleanTitle.contains('Google'))) {
         final lowerTitle = cleanTitle.toLowerCase();
         if (!lowerTitle.contains('google') &&
             !lowerTitle.contains('wallet') &&
             !lowerTitle.contains('гаманець') &&
+            !RegExp(r'(?:₴|грн|uah|\$|€)', caseSensitive: false)
+                .hasMatch(cleanTitle) &&
             cleanTitle.isNotEmpty) {
           merchant = cleanTitle;
         }
@@ -583,34 +710,32 @@ class NotificationExpenseService {
         }
       }
 
-      // 4) MONOBANK: e.g. "-150 ₴\nСільпо\nБаланс..." or "-150 ₴, Сільпо"
-      if (merchant == null && packageName.contains('mono')) {
-        final clean = textBeforeBalance
-            .replaceFirst(RegExp(r'^monobank\s*:\s*', caseSensitive: false), '')
-            .replaceFirst(RegExp(r'^(?:оплата|списання|купівля|покупка)?\s*', caseSensitive: false), '')
-            .replaceFirst(RegExp(r'^[+−\-–—]?\s*\d+(?:[.,]\d{1,2})?\s*(?:₴|грн|uah)?\s*[,.:–\-\n\s]*', caseSensitive: false), '')
-            .trim();
-
-        if (clean.isNotEmpty) {
-          String cand = clean.split(RegExp(r'[\n.]')).first.trim();
-          cand = cand.replaceAll(RegExp(r'^[•–\-,\s]+|[•–\-,\s]+$'), '').trim();
-          if (cand.isNotEmpty && !cand.toLowerCase().contains('баланс') && !cand.toLowerCase().contains('monobank')) {
-            merchant = cand;
-          }
-        }
-      }
-
-      // 5) If title is not generic and not empty, use title as merchant
+      // 5) Fallback: if title is not generic and not an amount, use cleaned title as merchant
       if (merchant == null && cleanTitle.isNotEmpty) {
-        final lowerTitle = cleanTitle.toLowerCase();
-        if (!lowerTitle.contains('сповіщення') &&
+        var cleanedTitle = cleanTitle
+            .replaceAll(
+                RegExp(
+                    r'кешбек\s*\d*(?:[.,]\d+)?\s*(?:₴|грн|uah|%|\.{2,})?',
+                    caseSensitive: false),
+                '')
+            .replaceAll(
+                RegExp(
+                    r'[+−\-–—]?\s*\d+(?:[\s]\d{3})*(?:[.,]\d{1,2})?\s*(?:₴|грн|uah|\$|€)',
+                    caseSensitive: false),
+                '')
+            .replaceAll(
+                RegExp(r'^[^\p{L}\p{N}]+|[^\p{L}\p{N})]+$', unicode: true), '')
+            .trim();
+        final lowerTitle = cleanedTitle.toLowerCase();
+        if (cleanedTitle.isNotEmpty &&
+            !lowerTitle.contains('сповіщення') &&
             !lowerTitle.contains('повідомлення') &&
             !lowerTitle.contains('notification') &&
             !lowerTitle.contains('приват24') &&
             !lowerTitle.contains('privat24') &&
             !lowerTitle.contains('monobank') &&
             !lowerTitle.contains('shell')) {
-          merchant = cleanTitle;
+          merchant = cleanedTitle;
         }
       }
     }
@@ -622,7 +747,8 @@ class NotificationExpenseService {
         merchant = merchant.substring(1, merchant.length - 1).trim();
       }
       merchant = merchant.replaceAll(RegExp(r'\.{2,}$'), '').trim();
-      merchant = merchant.replaceAll(RegExp(r'^[•–\-—,\s]+|[•–\-—,\s]+$'), '').trim();
+      merchant =
+          merchant.replaceAll(RegExp(r'^[•–\-—,\s]+|[•–\-—,\s]+$'), '').trim();
       if (merchant.length > 50) {
         merchant = merchant.substring(0, 50).trim();
       }

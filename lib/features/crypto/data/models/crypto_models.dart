@@ -85,6 +85,20 @@ class TpSlInfo {
   final double accumulatePrice;
   final double distToAccumulatePct;
 
+  // Професійні індикатори (RSI 14, ATR волатильність, Об'єм, R:R та BTC Regime)
+  final double rsi;
+  final String rsiStatus;
+  final String rsiDivergence;
+  final double atr;
+  final double atrPct;
+  final double volumeRatio;
+  final String volumeStatus;
+  final double riskRewardRatio;
+  final String riskRewardGrade; // GOOD, ACCEPTABLE, POOR
+  final String riskRewardLabel;
+  final String btcMarketRegime;
+  final List<DcaOrderLevel> dcaLadder;
+
   TpSlInfo({
     required this.entryPrice,
     required this.tp1,
@@ -112,6 +126,34 @@ class TpSlInfo {
     this.positionInChannel = 'У межах каналу',
     this.accumulatePrice = 0.0,
     this.distToAccumulatePct = 0.0,
+    this.rsi = 50.0,
+    this.rsiStatus = 'Нейтральний (RSI 50.0)',
+    this.rsiDivergence = 'Відсутня',
+    this.atr = 0.0,
+    this.atrPct = 0.0,
+    this.volumeRatio = 1.0,
+    this.volumeStatus = 'Нормальний об\'єм',
+    this.riskRewardRatio = 2.0,
+    this.riskRewardGrade = 'ACCEPTABLE',
+    this.riskRewardLabel = '🟡 Помірний R:R (2.0 : 1)',
+    this.btcMarketRegime = '⚪ Нейтральний ринок BTC',
+    this.dcaLadder = const [],
+  });
+}
+
+class DcaOrderLevel {
+  final int orderNumber;
+  final int sharePct;
+  final double targetPrice;
+  final double distFromCurrentPct;
+  final String rationale;
+
+  const DcaOrderLevel({
+    required this.orderNumber,
+    required this.sharePct,
+    required this.targetPrice,
+    required this.distFromCurrentPct,
+    required this.rationale,
   });
 }
 
@@ -195,6 +237,59 @@ class DcaTransaction {
     );
   }
 }
+
+class DcaTrancheItem {
+  final String id;
+  final String symbol;
+  final double amount;
+  final double buyPrice;
+  final double fee;
+  final DateTime date;
+  final String walletType;
+  final String notes;
+  final double currentPrice;
+  final double pnlPct;
+  final double pnlUsd;
+
+  const DcaTrancheItem({
+    required this.id,
+    required this.symbol,
+    required this.amount,
+    required this.buyPrice,
+    required this.fee,
+    required this.date,
+    required this.walletType,
+    required this.notes,
+    required this.currentPrice,
+    required this.pnlPct,
+    required this.pnlUsd,
+  });
+}
+
+class DcaGroupedCoin {
+  final String symbol;
+  final double totalAmount;
+  final double avgEntryPrice;
+  final double totalCost;
+  final double currentPrice;
+  final double totalValueUsd;
+  final double pnlUsd;
+  final double pnlPct;
+  final List<DcaTrancheItem> tranches;
+
+  const DcaGroupedCoin({
+    required this.symbol,
+    required this.totalAmount,
+    required this.avgEntryPrice,
+    required this.totalCost,
+    required this.currentPrice,
+    required this.totalValueUsd,
+    required this.pnlUsd,
+    required this.pnlPct,
+    required this.tranches,
+  });
+}
+
 
 class GroqAuditItem {
   final String symbol;
@@ -348,5 +443,153 @@ class PortfolioHistoricalDataset {
       totalPnlPct: 0.0,
     );
   }
+}
+
+// ==========================================
+// AI-РАДАР МОНЕТ (MARKET SCANNER & ALPHA FINDER)
+// ==========================================
+
+class AiMarketOpportunity {
+  final String symbol;
+  final String name;
+  final String sector;
+  final double currentPrice;
+  final double entryZoneMin;
+  final double entryZoneMax;
+  final double targetPrice1;
+  final double targetPrice2;
+  final double stopLoss;
+  final double potentialPct;
+  final double riskRewardRatio;
+  final String riskLevel; // 'Низький', 'Помірний', 'Високий'
+  final int confidenceScore; // 1-100
+  final String technicalReason;
+  final String smartMoneyCatalyst;
+  final String dcaStrategy;
+  final double rsi;
+  final double dropFromPeakPct;
+  final double volume24hUsd;
+  final DateTime scannedAt;
+
+  const AiMarketOpportunity({
+    required this.symbol,
+    required this.name,
+    required this.sector,
+    required this.currentPrice,
+    required this.entryZoneMin,
+    required this.entryZoneMax,
+    required this.targetPrice1,
+    required this.targetPrice2,
+    required this.stopLoss,
+    required this.potentialPct,
+    required this.riskRewardRatio,
+    required this.riskLevel,
+    required this.confidenceScore,
+    required this.technicalReason,
+    required this.smartMoneyCatalyst,
+    required this.dcaStrategy,
+    required this.rsi,
+    required this.dropFromPeakPct,
+    required this.volume24hUsd,
+    required this.scannedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'symbol': symbol,
+    'name': name,
+    'sector': sector,
+    'currentPrice': currentPrice,
+    'entryZoneMin': entryZoneMin,
+    'entryZoneMax': entryZoneMax,
+    'targetPrice1': targetPrice1,
+    'targetPrice2': targetPrice2,
+    'stopLoss': stopLoss,
+    'potentialPct': potentialPct,
+    'riskRewardRatio': riskRewardRatio,
+    'riskLevel': riskLevel,
+    'confidenceScore': confidenceScore,
+    'technicalReason': technicalReason,
+    'smartMoneyCatalyst': smartMoneyCatalyst,
+    'dcaStrategy': dcaStrategy,
+    'rsi': rsi,
+    'dropFromPeakPct': dropFromPeakPct,
+    'volume24hUsd': volume24hUsd,
+    'scannedAt': scannedAt.toIso8601String(),
+  };
+
+  factory AiMarketOpportunity.fromJson(Map<String, dynamic> json) => AiMarketOpportunity(
+    symbol: json['symbol']?.toString() ?? '',
+    name: json['name']?.toString() ?? '',
+    sector: json['sector']?.toString() ?? 'Altcoin',
+    currentPrice: (json['currentPrice'] as num?)?.toDouble() ?? 0.0,
+    entryZoneMin: (json['entryZoneMin'] as num?)?.toDouble() ?? 0.0,
+    entryZoneMax: (json['entryZoneMax'] as num?)?.toDouble() ?? 0.0,
+    targetPrice1: (json['targetPrice1'] as num?)?.toDouble() ?? 0.0,
+    targetPrice2: (json['targetPrice2'] as num?)?.toDouble() ?? 0.0,
+    stopLoss: (json['stopLoss'] as num?)?.toDouble() ?? 0.0,
+    potentialPct: (json['potentialPct'] as num?)?.toDouble() ?? 0.0,
+    riskRewardRatio: (json['riskRewardRatio'] as num?)?.toDouble() ?? 0.0,
+    riskLevel: json['riskLevel']?.toString() ?? 'Помірний',
+    confidenceScore: (json['confidenceScore'] as num?)?.toInt() ?? 75,
+    technicalReason: json['technicalReason']?.toString() ?? '',
+    smartMoneyCatalyst: json['smartMoneyCatalyst']?.toString() ?? '',
+    dcaStrategy: json['dcaStrategy']?.toString() ?? '',
+    rsi: (json['rsi'] as num?)?.toDouble() ?? 0.0,
+    dropFromPeakPct: (json['dropFromPeakPct'] as num?)?.toDouble() ?? 0.0,
+    volume24hUsd: (json['volume24hUsd'] as num?)?.toDouble() ?? 0.0,
+    scannedAt: json['scannedAt'] != null
+        ? DateTime.tryParse(json['scannedAt'].toString()) ?? DateTime.now()
+        : DateTime.now(),
+  );
+}
+
+class AiMarketRadarReport {
+  final DateTime scannedAt;
+  final String marketRegime;
+  final String btcTrend;
+  final String macroSummary;
+  final int totalCoinsScanned;
+  final List<AiMarketOpportunity> opportunities;
+
+  const AiMarketRadarReport({
+    required this.scannedAt,
+    required this.marketRegime,
+    required this.btcTrend,
+    required this.macroSummary,
+    required this.totalCoinsScanned,
+    required this.opportunities,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'scannedAt': scannedAt.toIso8601String(),
+    'marketRegime': marketRegime,
+    'btcTrend': btcTrend,
+    'macroSummary': macroSummary,
+    'totalCoinsScanned': totalCoinsScanned,
+    'opportunities': opportunities.map((o) => o.toJson()).toList(),
+  };
+
+  factory AiMarketRadarReport.fromJson(Map<String, dynamic> json) => AiMarketRadarReport(
+    scannedAt: json['scannedAt'] != null
+        ? DateTime.tryParse(json['scannedAt'].toString()) ?? DateTime.now()
+        : DateTime.now(),
+    marketRegime: json['marketRegime']?.toString() ?? 'Аналіз ринку...',
+    btcTrend: json['btcTrend']?.toString() ?? 'Нейтральний',
+    macroSummary: json['macroSummary']?.toString() ?? '',
+    totalCoinsScanned: (json['totalCoinsScanned'] as num?)?.toInt() ?? 0,
+    opportunities: (json['opportunities'] as List<dynamic>? ?? [])
+        .whereType<Map<String, dynamic>>()
+        .map(AiMarketOpportunity.fromJson)
+        .toList(),
+  );
+
+  factory AiMarketRadarReport.empty() => AiMarketRadarReport(
+    scannedAt: DateTime.now(),
+    marketRegime: 'Сканер очікує запуску',
+    btcTrend: '—',
+    macroSummary: 'Натисніть "Сканувати ринок", щоб AI-аналітики проаналізували 350+ монет та підібрали найкращі точки входу.',
+    totalCoinsScanned: 0,
+    opportunities: const [],
+  );
 }
 

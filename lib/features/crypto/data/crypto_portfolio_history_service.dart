@@ -77,27 +77,58 @@ class CryptoPortfolioHistoryService {
         break;
     }
 
-    // 1. Знаходимо ключові символи для споту
+    // 1. Знаходимо символи для споту (до 15 найвагоміших за totalUsd)
     final spotHoldings = holdings.where((h) => h.amount > 0).toList();
-    final topSymbols = spotHoldings.take(5).map((h) => h.symbol.toUpperCase()).toSet();
-    if (topSymbols.isEmpty) {
-      topSymbols.add('BTC');
-    }
+    spotHoldings.sort((a, b) => b.totalUsd.compareTo(a.totalUsd));
 
-    // Завантажуємо свічки для топових монет та для BTC (як базового орієнтиру ринку)
-    final Map<String, List<List<dynamic>>> candlesMap = {};
-    for (final sym in {...topSymbols, 'BTC'}) {
+    final Set<String> symbolsToFetch = {};
+    for (final h in spotHoldings.take(15)) {
+      final sym = h.symbol.toUpperCase();
       if (sym != 'USDT' && sym != 'USDC' && sym != 'FDUSD' && sym != 'DAI') {
-        final klines = await _fetchKlines(sym, interval, limit);
-        if (klines.isNotEmpty) {
-          candlesMap[sym] = klines;
-        }
+        symbolsToFetch.add(sym);
       }
     }
 
-    // Базові таймстемпи беремо з BTC або створюємо синтетичні
+    for (final pos in futuresPositions) {
+      final clean = pos.symbol.replaceAll('USDT', '').toUpperCase();
+      if (clean.isNotEmpty && clean != 'USDT') {
+        symbolsToFetch.add(clean);
+      }
+    }
+
+    symbolsToFetch.add('BTC');
+
+    // Завантажуємо свічки паралельно
+    final Map<String, List<List<dynamic>>> candlesMap = {};
+    await Future.wait(symbolsToFetch.map((sym) async {
+      final klines = await _fetchKlines(sym, interval, limit);
+      if (klines.isNotEmpty) {
+        candlesMap[sym] = klines;
+      }
+    }));
+
+    // Базові таймстемпи беремо з BTC або першого доступного джерела
     final btcCandles = candlesMap['BTC'] ?? (candlesMap.isNotEmpty ? candlesMap.values.first : []);
     final int pointsCount = btcCandles.isNotEmpty ? btcCandles.length : limit;
+
+    // Остання ціна закриття BTC для масштабування активів без свічок
+    double btcLatestClose = 0.0;
+    if (btcCandles.isNotEmpty) {
+      btcLatestClose = double.tryParse(btcCandles.last[4]?.toString() ?? '') ?? 0.0;
+    }
+
+    // Будуємо карту цін за часом для кожного символу
+    final Map<String, Map<int, double>> priceByTime = {};
+    candlesMap.forEach((sym, klines) {
+      priceByTime[sym] = {};
+      for (final c in klines) {
+        final t = (c[0] as num).toInt();
+        final p = double.tryParse(c[4]?.toString() ?? '') ?? 0.0;
+        if (p > 0) {
+          priceByTime[sym]![t] = p;
+        }
+      }
+    });
 
     final List<ChartPoint> spotPoints = [];
     final List<ChartPoint> futuresPoints = [];
@@ -108,7 +139,11 @@ class CryptoPortfolioHistoryService {
     double spotCostBasis = 0.0;
     for (final h in spotHoldings) {
       currentSpotTotal += h.totalUsd;
-      spotCostBasis += h.amount * (h.avgEntryPrice > 0 ? h.avgEntryPrice : h.currentPrice);
+      final entry = h.avgEntryPrice > 0 ? h.avgEntryPrice : h.currentPrice;
+      spotCostBasis += h.amount * entry;
+    }
+    if (spotCostBasis <= 0) {
+      spotCostBasis = currentSpotTotal;
     }
     final currentSpotPnl = currentSpotTotal - spotCostBasis;
     final currentSpotPnlPct = spotCostBasis > 0 ? (currentSpotPnl / spotCostBasis) * 100 : 0.0;
@@ -129,13 +164,18 @@ class CryptoPortfolioHistoryService {
 
     for (int i = 0; i < pointsCount; i++) {
       DateTime pointTime;
+      int openTimeMs = 0;
+      double btcPriceAtT = btcLatestClose;
+
       if (btcCandles.isNotEmpty && i < btcCandles.length) {
-        final openTimeMs = (btcCandles[i][0] as num).toInt();
+        openTimeMs = (btcCandles[i][0] as num).toInt();
         pointTime = DateTime.fromMillisecondsSinceEpoch(openTimeMs);
+        btcPriceAtT = double.tryParse(btcCandles[i][4]?.toString() ?? '') ?? btcLatestClose;
       } else {
         // Синтетичний таймстемп
         final durationStep = _getStepDuration(period, pointsCount);
         pointTime = now.subtract(durationStep * (pointsCount - 1 - i));
+        openTimeMs = pointTime.millisecondsSinceEpoch;
       }
 
       // 1. Спотова вартість у точці i
@@ -147,12 +187,25 @@ class CryptoPortfolioHistoryService {
           final sym = h.symbol.toUpperCase();
           if (sym == 'USDT' || sym == 'USDC' || sym == 'DAI' || sym == 'FDUSD') {
             spotValAtT += h.amount;
+          } else if (candlesMap.containsKey(sym)) {
+            // Є реальні свічки для цього активу
+            double priceAtT = 0.0;
+            final exact = priceByTime[sym]?[openTimeMs];
+            if (exact != null && exact > 0) {
+              priceAtT = exact;
+            } else {
+              final klines = candlesMap[sym]!;
+              final idxFromEnd = pointsCount - 1 - i;
+              final candleIdx = (klines.length - 1 - idxFromEnd).clamp(0, klines.length - 1);
+              priceAtT = double.tryParse(klines[candleIdx][4]?.toString() ?? '') ?? h.currentPrice;
+            }
+            spotValAtT += h.amount * priceAtT;
           } else {
-            final candles = candlesMap[sym] ?? candlesMap['BTC'];
-            if (candles != null && candles.isNotEmpty) {
-              final candleIdx = (i < candles.length) ? i : (candles.length - 1);
-              final closePrice = double.tryParse(candles[candleIdx][4]?.toString() ?? '') ?? h.currentPrice;
-              spotValAtT += h.amount * closePrice;
+            // Немає свічок для альткоїна (Solana/EVM токен або відсутній на Binance).
+            // Масштабуємо його вартість відносно загального ринку (BTC), але НІ В ЯКОМУ РАЗІ не беремо ціну BTC!
+            if (btcLatestClose > 0 && btcPriceAtT > 0) {
+              final marketRatio = (btcPriceAtT / btcLatestClose);
+              spotValAtT += h.totalUsd * marketRatio;
             } else {
               spotValAtT += h.totalUsd;
             }
@@ -160,7 +213,7 @@ class CryptoPortfolioHistoryService {
         }
       }
 
-      // Якщо це остання точка — точно прирівнюємо до поточного балансу
+      // Остання точка точно відповідає поточному балансу
       if (i == pointsCount - 1 && currentSpotTotal > 0) {
         spotValAtT = currentSpotTotal;
       }
@@ -183,15 +236,27 @@ class CryptoPortfolioHistoryService {
         double simulatedPosPnl = 0.0;
         for (final pos in futuresPositions) {
           final cleanSym = pos.symbol.replaceAll('USDT', '').toUpperCase();
-          final candles = candlesMap[cleanSym] ?? candlesMap['BTC'];
-          if (candles != null && candles.isNotEmpty) {
-            final candleIdx = (i < candles.length) ? i : (candles.length - 1);
-            final priceAtT = double.tryParse(candles[candleIdx][4]?.toString() ?? '') ?? pos.markPrice;
+          if (candlesMap.containsKey(cleanSym)) {
+            double priceAtT = 0.0;
+            final exact = priceByTime[cleanSym]?[openTimeMs];
+            if (exact != null && exact > 0) {
+              priceAtT = exact;
+            } else {
+              final klines = candlesMap[cleanSym]!;
+              final idxFromEnd = pointsCount - 1 - i;
+              final candleIdx = (klines.length - 1 - idxFromEnd).clamp(0, klines.length - 1);
+              priceAtT = double.tryParse(klines[candleIdx][4]?.toString() ?? '') ?? pos.markPrice;
+            }
             final isLong = pos.direction == 'LONG';
             final diff = isLong ? (priceAtT - pos.entryPrice) : (pos.entryPrice - priceAtT);
             simulatedPosPnl += diff * pos.amount;
           } else {
-            simulatedPosPnl += pos.unrealizedPnl;
+            if (btcLatestClose > 0 && btcPriceAtT > 0) {
+              final marketRatio = (btcPriceAtT / btcLatestClose);
+              simulatedPosPnl += pos.unrealizedPnl * marketRatio;
+            } else {
+              simulatedPosPnl += pos.unrealizedPnl;
+            }
           }
         }
         futuresPnlAtT = simulatedPosPnl;

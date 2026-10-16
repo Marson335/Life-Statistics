@@ -24,7 +24,13 @@ public class NotificationReceiver extends BroadcastReceiver {
     @RequiresApi(api = VERSION_CODES.JELLY_BEAN_MR2)
     @Override
     public void onReceive(Context context, Intent intent) {
+        if (intent.getBooleanExtra("connection_event", false)) {
+            return;
+        }
         String packageName = intent.getStringExtra(PACKAGE_NAME);
+        if (packageName == null || packageName.isEmpty()) {
+            return;
+        }
         String title = intent.getStringExtra(NOTIFICATION_TITLE);
         String content = intent.getStringExtra(NOTIFICATION_CONTENT);
         byte[] notificationIcon = intent.getByteArrayExtra(NOTIFICATIONS_ICON);
