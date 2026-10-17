@@ -97,6 +97,17 @@ class TaskRepository {
     if (batchCount > 0) await batch.commit();
   }
 
+  // Get task by ID
+  Future<Task?> getTaskById(String taskId) async {
+    try {
+      final doc = await _tasksCollection.doc(taskId).get();
+      if (doc.exists && doc.data() != null) {
+        return Task.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+      }
+    } catch (_) {}
+    return null;
+  }
+
   // Update task
   Future<void> updateTask(Task task) async {
     await _tasksCollection.doc(task.id).update(task.toMap());

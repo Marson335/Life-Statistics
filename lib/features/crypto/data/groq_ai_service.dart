@@ -14,111 +14,221 @@ class GroqAiService {
       apiKey!.trim().isNotEmpty &&
       !apiKey!.contains('your_groq');
 
+  static const Set<String> _stablecoins = {
+    'USDT',
+    'USDC',
+    'FDUSD',
+    'DAI',
+    'TUSD',
+    'USDE',
+    'BUSD',
+    'PYUSD',
+    'USDD',
+    'GUSD',
+  };
+
+  static const Set<String> _coreAssets = {'BTC', 'ETH', 'WBTC', 'WETH'};
+
   Future<GroqAuditReport> auditPortfolio({
     required List<HoldingItem> holdings,
     required CashRatioInfo cashRatio,
+    List<DcaGroupedCoin> dcaCoins = const [],
+    double futuresMargin = 0.0,
+    double futuresPnl = 0.0,
+    List<BinancePositionItem> futuresPositions = const [],
   }) async {
-    if (holdings.isEmpty) {
+    // 1. Об'єднуємо спотові активи з точними цінами закупки із DCA (FIFO + Ручні)
+    final Map<String, DcaGroupedCoin> dcaMap = {
+      for (final c in dcaCoins) c.symbol.toUpperCase(): c,
+    };
+
+    final List<HoldingItem> unifiedHoldings = [];
+    final Set<String> processedSymbols = {};
+
+    for (final h in holdings) {
+      final sym = h.symbol.toUpperCase();
+      processedSymbols.add(sym);
+      final dca = dcaMap[sym];
+
+      double avgEntry = h.avgEntryPrice;
+      if (dca != null && dca.avgEntryPrice > 0) {
+        avgEntry = dca.avgEntryPrice;
+      }
+
+      final costUsd = h.amount * avgEntry;
+      final pnlUsd = _stablecoins.contains(sym) ? 0.0 : (h.totalUsd - costUsd);
+      final pnlPct = (!_stablecoins.contains(sym) && costUsd > 0)
+          ? ((pnlUsd / costUsd) * 100.0)
+          : 0.0;
+
+      unifiedHoldings.add(HoldingItem(
+        symbol: sym,
+        amount: h.amount,
+        currentPrice: h.currentPrice,
+        totalUsd: h.totalUsd,
+        avgEntryPrice: avgEntry,
+        pnlUsd: double.parse(pnlUsd.toStringAsFixed(2)),
+        pnlPct: double.parse(pnlPct.toStringAsFixed(2)),
+        chg24h: h.chg24h,
+        chg7d: h.chg7d,
+        chg30d: h.chg30d,
+        chg1y: h.chg1y,
+        sharePct: h.sharePct,
+        sources: h.sources,
+        tpSl: h.tpSl,
+      ));
+    }
+
+    // Якщо користувач додав ручні DCA монети, яких немає в біржовому списку holdings
+    for (final dca in dcaCoins) {
+      final sym = dca.symbol.toUpperCase();
+      if (!processedSymbols.contains(sym) && dca.totalValueUsd >= 0.5) {
+        final curPrice = dca.currentPrice > 0 ? dca.currentPrice : dca.avgEntryPrice;
+        final tp1 = double.parse((curPrice * 1.25).toStringAsFixed(4));
+        final tp2 = double.parse((curPrice * 1.55).toStringAsFixed(4));
+        final tp3 = double.parse((curPrice * 2.10).toStringAsFixed(4));
+        final sl = double.parse((curPrice * 0.88).toStringAsFixed(4));
+        final acc = double.parse((curPrice * 0.92).toStringAsFixed(4));
+
+        unifiedHoldings.add(HoldingItem(
+          symbol: sym,
+          amount: dca.totalAmount,
+          currentPrice: curPrice,
+          totalUsd: dca.totalValueUsd,
+          avgEntryPrice: dca.avgEntryPrice,
+          pnlUsd: double.parse(dca.pnlUsd.toStringAsFixed(2)),
+          pnlPct: double.parse(dca.pnlPct.toStringAsFixed(2)),
+          chg24h: 0.0,
+          chg7d: 0.0,
+          chg30d: 0.0,
+          chg1y: 0.0,
+          sharePct: 0.0,
+          sources: const ['DCA'],
+          tpSl: TpSlInfo(
+            entryPrice: dca.avgEntryPrice,
+            tp1: tp1,
+            tp1Pct: 30,
+            distToTp1Pct: 25.0,
+            tp2: tp2,
+            tp2Pct: 35,
+            distToTp2Pct: 55.0,
+            tp3: tp3,
+            tp3Pct: 35,
+            distToTp3Pct: 110.0,
+            stopLoss: sl,
+            distToSlPct: 12.0,
+            stopReason: 'Захисний стоп (-12%)',
+            accumulatePrice: acc,
+            distToAccumulatePct: 8.0,
+            rsi: 48.0,
+            atrPct: 4.5,
+            riskRewardRatio: 2.3,
+          ),
+        ));
+      }
+    }
+
+    // Відсікаємо мікроскопічний пил (< $0.50), якщо є нормальні позиції
+    final activeHoldings = unifiedHoldings.where((h) => h.totalUsd >= 0.50).toList();
+    final targetHoldings = activeHoldings.isNotEmpty ? activeHoldings : unifiedHoldings;
+
+    if (targetHoldings.isEmpty && futuresMargin <= 0) {
       return GroqAuditReport(
         overallHealthScore: 50,
         diversificationStatus: 'ПОРОЖНІЙ',
-        cashReserveComment: 'Активи не виявлені.',
+        cashReserveComment: 'Активи не виявлені на споті або в DCA.',
         assetRecommendations: [],
-        strategicSummary: 'Додайте активи до гаманця або підключіть біржу для запуску AI-аудиту.',
+        strategicSummary: 'Додайте активи до гаманця, синхронізуйте Binance Spot або внесіть угоду в DCA для запуску професійного аудиту.',
       );
     }
 
-    // Якщо ключ введено, робимо запит до Groq Llama 3.3 70B
-    if (isConfigured) {
+    // 2. Будуємо точний математичний квант-аудит як базовий фундамент
+    final baseReport = _generateDeterministicAudit(
+      targetHoldings,
+      cashRatio,
+      futuresMargin: futuresMargin,
+      futuresPnl: futuresPnl,
+      futuresPositions: futuresPositions,
+    );
+
+    // 3. Якщо налаштовано Groq API — збагачуємо аналітику через Llama 3.3 70B зі збереженням точних чисел
+    if (isConfigured && baseReport.assetRecommendations.isNotEmpty) {
       try {
-        final summaryAssets = holdings.take(15).map((h) => {
-          'symbol': h.symbol,
-          'total_usd': h.totalUsd,
-          'share_pct': h.sharePct,
-          'pnl_pct': h.pnlPct,
-          'avg_entry': h.avgEntryPrice,
-          'current_price': h.currentPrice,
-          'bollinger_upper_1d': h.tpSl.bollingerUpper,
-          'bollinger_middle_sma20': h.tpSl.bollingerMiddle,
-          'bollinger_lower_1d': h.tpSl.bollingerLower,
-          'swing_high_resistance': h.tpSl.swingHigh,
-          'swing_low_support': h.tpSl.swingLow,
-          'global_peak_100d': h.tpSl.globalPeak100d,
-          'channel_position': h.tpSl.positionInChannel,
-          'tp1_layer_bollinger': h.tpSl.tp1,
-          'tp2_layer_resistance': h.tpSl.tp2,
-          'tp3_layer_peak': h.tpSl.tp3,
-          'accumulate_dip_price': h.tpSl.accumulatePrice,
-          'structural_stop_loss': h.tpSl.stopLoss,
-          'rsi_14': h.tpSl.rsi,
-          'rsi_status': h.tpSl.rsiStatus,
-          'rsi_divergence': h.tpSl.rsiDivergence,
-          'atr_volatility_pct': h.tpSl.atrPct,
-          'volume_status': h.tpSl.volumeStatus,
-          'risk_reward_ratio': h.tpSl.riskRewardRatio,
-          'risk_reward_label': h.tpSl.riskRewardLabel,
-          'btc_market_regime': h.tpSl.btcMarketRegime,
+        final summaryAssets = baseReport.assetRecommendations.take(15).map((item) => {
+          'symbol': item.symbol,
+          'total_usd': item.totalUsd,
+          'share_pct': item.sharePct,
+          'avg_entry_price': item.avgEntryPrice,
+          'current_price': item.currentPrice,
+          'pnl_usd': item.pnlUsd,
+          'pnl_pct': item.pnlPct,
+          'rsi_14d': item.rsi,
+          'rsi_divergence': item.rsiDivergence,
+          'channel_position': item.channelPosition,
+          'atr_volatility_pct': item.atrPct,
+          'volume_status': item.volumeStatus,
+          'risk_reward_ratio': item.riskRewardRatio,
+          'tp1_price_30pct': item.tp1Price,
+          'tp2_price_35pct': item.tp2Price,
+          'tp3_price_35pct': item.tp3Price,
+          'dca_buy_dip_price': item.dcaBuyPrice,
+          'structural_stop_loss': item.stopLossPrice,
+          'quant_suggested_action': item.action,
         }).toList();
 
         const systemPrompt = '''
-Ти — Професійний Квант-Трейдер та Керуючий Криптопортфелем.
-Твоє завдання — провести глибокий аудит відкритого криптопортфелю клієнта на основі індикаторів 1D свічок.
-Для кожного активу тобі надані реальні індикатори:
-- Смуги Боллінджера (SMA 20, 2 StdDev): bollinger_upper_1d, bollinger_lower_1d.
-- RSI (14 періодів): rsi_14, rsi_status, rsi_divergence (Бичача / Ведмежа дивергенція).
-- Волатильність ATR: atr_volatility_pct, адаптивний стоп-лос (structural_stop_loss).
-- Об'єм (Volume): volume_status (наявність великих гравців / сплеск об'єму).
-- Співвідношення Ризик/Прибуток: risk_reward_ratio, risk_reward_label.
-- Стан ринку BTC: btc_market_regime (Бичачий / Ведмежий фон).
-- 3 Шари фіксації TP: Шар 1 (30%), Шар 2 (35%), Шар 3 (35%), рівень закупки на дні (accumulate_dip_price).
+Ти — Головний Квант-Трейдер та Ризик-Менеджер Інституційного Криптофонду.
+Твоє завдання — провести глибокий, конкретний та зрозумілий аудит криптопортфеля клієнта на основі реальних позицій, їхньої ціни закупки (Avg Entry), поточного PnL та технічних індикаторів 1D свічок.
 
-Ти повинен надати відповідь ВИКЛЮЧНО у валідному форматі JSON без жодного додаткового тексту чи markdown-обгорток.
-
-Формат JSON:
+ВАЖЛИВІ ПРАВИЛА:
+1. Використовуй ТОЧНІ ціни та відсотки із вхідних даних (`avg_entry_price`, `current_price`, `pnl_pct`, `share_pct`, `tp1_price_30pct`, `tp2_price_35pct`, `dca_buy_dip_price`, `structural_stop_loss`). Не вигадуй випадкових цифр.
+2. По кожній монеті з `summaryAssets` надай:
+   - `action`: одне зі значень `TAKE_PROFIT`, `ACCUMULATE`, `HOLD`, `REDUCE`, `STOP_WATCH`.
+   - `action_label_uk`: короткий наказ українською (наприклад: `ФІКСУВАТИ ЧАСТИНУ`, `ДОБИРАТИ НА СПАДІ`, `УТРИМУВАТИ`, `СКОРОТИТИ КОНЦЕНТРАЦІЮ`, `КОНТРОЛЬ СТОПУ`).
+   - `risk_level`: `LOW`, `MEDIUM` або `HIGH`.
+   - `reason`: детальне пояснення стану позиції (порівняння ціни закупки з ринком, поточний PnL, RSI, положення в каналі Боллінджера, R:R та вага монети в портфелі).
+   - `execution_plan`: чіткий покроковий план дій з конкретними цінами: де фіксувати TP1 (30%) та TP2 (35%), за якою ціною стоїть ліміт на добір (`dca_buy_dip_price`) і де проходить захисний стоп (`structural_stop_loss`).
+3. Сформуй `priority_actions` — список із 3–4 конкретних першочергових кроків для трейдера прямо зараз.
+4. Надай відповідь ВИКЛЮЧНО у валідному JSON без markdown-обгорток:
 {
-  "overall_health_score": 85,
+  "overall_health_score": 82,
   "diversification_status": "ДОБРА",
-  "cash_reserve_comment": "Коментар щодо достатності кешу та стейблкоїнів українською мовою",
+  "cash_reserve_comment": "Детальний аналіз кеш-подушки в стейблкоїнах та суми на відкуп просадок...",
+  "risk_summary": "Аналіз концентрації активів, кореляції з BTC, волатильності та ф'ючерсного плеча...",
+  "strategic_summary": "Комплексний висновок керуючого портфелем...",
+  "priority_actions": [
+    "1. Зафіксувати 30% прибутку по ...",
+    "2. Виставити лімітний ордер на добір ... по \$..."
+  ],
   "asset_recommendations": [
     {
-      "symbol": "BTC",
-      "action": "HOLD",
-      "risk_level": "LOW",
-      "reason": "Чітке обґрунтування з урахуванням RSI, R:R та шарів фіксації українською мовою"
+      "symbol": "SOL",
+      "action": "ACCUMULATE",
+      "action_label_uk": "ДОБИРАТИ НА СПАДІ",
+      "risk_level": "MEDIUM",
+      "reason": "Розбір позиції...",
+      "execution_plan": "Торговий план із точними цінами..."
     }
-  ],
-  "strategic_summary": "Стратегічний підсумок: кого фіксувати по шарах, кого добирати на дні за RSI/DCA, стан фону BTC і кеш-подушки"
+  ]
 }
-
-Допустимі значення action: HOLD, ACCUMULATE, TAKE_PROFIT, REDUCE
-Допустимі значення risk_level: LOW, MEDIUM, HIGH
-
-Торгові правила:
-1. Якщо RSI > 70 або ціна біля/вище bollinger_upper_1d: action: TAKE_PROFIT. Рекомендуй скинути 30% на Шар 1 і зафіксувати прибуток у стейбли.
-2. Якщо RSI < 35 або виявлено бичачу дивергенцію біля bollinger_lower_1d чи swing_low: action: ACCUMULATE. Вкажи ціну закупки accumulate_dip_price.
-3. Якщо risk_reward_ratio < 1.4: попередь, що ризик перевищує прибуток, краще дочекатися глибшого просідання або виходу в беззбиток.
-4. Якщо btc_market_regime ведмежий — попередь про додаткову обережність щодо альткоїнів.
-5. Якщо частка монети > 35% (крім BTC/ETH) — action: REDUCE.
-6. Усі тексти мають бути грамотною, професійною УКРАЇНСЬКОЮ МОВОЮ трейдера.
 ''';
 
-        final userPrompt = '''
-ДАНІ ПОРТФЕЛЮ:
-- Загальний капітал: \$${cashRatio.totalUsd.toStringAsFixed(2)}
-- Частка кешу (стейблкоїнів): ${cashRatio.cashPercentage}% (\$${cashRatio.cashUsd.toStringAsFixed(2)})
-- Частка волатильної крипти: ${cashRatio.cryptoPercentage}% (\$${cashRatio.cryptoUsd.toStringAsFixed(2)})
-- Активи з технічними індикаторами 1D:
-${json.encode(summaryAssets)}
-''';
-
-        final body = json.encode({
-          'model': _model,
-          'messages': [
-            {'role': 'system', 'content': systemPrompt},
-            {'role': 'user', 'content': userPrompt},
-          ],
-          'temperature': 0.1,
-          'response_format': {'type': 'json_object'},
+        final userPrompt = json.encode({
+          'portfolio_metrics': {
+            'total_value_usd': baseReport.totalValueUsd,
+            'total_invested_usd': baseReport.totalInvestedUsd,
+            'total_pnl_usd': baseReport.totalPnlUsd,
+            'total_pnl_pct': baseReport.totalPnlPct,
+            'cash_stablecoins_pct': baseReport.cashPct,
+            'cash_stablecoins_usd': baseReport.cashUsd,
+            'core_btc_eth_pct': baseReport.corePct,
+            'altcoins_pct': baseReport.altPct,
+            'top_asset': '${baseReport.topAssetSymbol} (${baseReport.topAssetSharePct}%)',
+            'futures_margin_usd': baseReport.futuresMarginUsd,
+            'futures_unrealized_pnl_usd': baseReport.futuresPnlUsd,
+            'btc_market_regime': baseReport.marketRegime,
+          },
+          'assets': summaryAssets,
         });
 
         final response = await http.post(
@@ -127,104 +237,558 @@ ${json.encode(summaryAssets)}
             'Content-Type': 'application/json',
             'Authorization': 'Bearer ${apiKey!.trim()}',
           },
-          body: body,
-        ).timeout(const Duration(seconds: 15));
+          body: json.encode({
+            'model': _model,
+            'messages': [
+              {'role': 'system', 'content': systemPrompt},
+              {'role': 'user', 'content': userPrompt},
+            ],
+            'temperature': 0.15,
+            'response_format': {'type': 'json_object'},
+          }),
+        ).timeout(const Duration(seconds: 16));
 
         if (response.statusCode == 200) {
           final data = json.decode(utf8.decode(response.bodyBytes));
           final content = data['choices']?[0]?['message']?['content']?.toString() ?? '{}';
-          final jsonResult = json.decode(content);
-          return GroqAuditReport.fromJson(jsonResult);
+          final parsed = json.decode(content) as Map<String, dynamic>;
+
+          final aiRecsRaw = parsed['asset_recommendations'] as List<dynamic>? ?? [];
+          final Map<String, Map<String, dynamic>> aiRecMap = {};
+          for (final r in aiRecsRaw) {
+            if (r is Map<String, dynamic>) {
+              final s = r['symbol']?.toString().toUpperCase() ?? '';
+              if (s.isNotEmpty) aiRecMap[s] = r;
+            }
+          }
+
+          final List<GroqAuditItem> mergedRecs = baseReport.assetRecommendations.map((baseItem) {
+            final aiItem = aiRecMap[baseItem.symbol];
+            if (aiItem == null) return baseItem;
+
+            final aiAction = aiItem['action']?.toString().toUpperCase();
+            final validAction = (aiAction != null &&
+                    ['TAKE_PROFIT', 'ACCUMULATE', 'HOLD', 'REDUCE', 'STOP_WATCH'].contains(aiAction))
+                ? aiAction
+                : baseItem.action;
+
+            final aiReason = aiItem['reason']?.toString().trim() ?? '';
+            final aiPlan = aiItem['execution_plan']?.toString().trim() ?? '';
+            final aiLabel = aiItem['action_label_uk']?.toString().trim() ?? '';
+
+            return GroqAuditItem(
+              symbol: baseItem.symbol,
+              action: validAction,
+              actionLabelUk: aiLabel.isNotEmpty ? aiLabel : _defaultActionLabelUk(validAction),
+              riskLevel: aiItem['risk_level']?.toString().toUpperCase() ?? baseItem.riskLevel,
+              reason: aiReason.isNotEmpty ? aiReason : baseItem.reason,
+              executionPlan: aiPlan.isNotEmpty ? aiPlan : baseItem.executionPlan,
+              amount: baseItem.amount,
+              currentPrice: baseItem.currentPrice,
+              avgEntryPrice: baseItem.avgEntryPrice,
+              totalUsd: baseItem.totalUsd,
+              sharePct: baseItem.sharePct,
+              pnlUsd: baseItem.pnlUsd,
+              pnlPct: baseItem.pnlPct,
+              rsi: baseItem.rsi,
+              rsiDivergence: baseItem.rsiDivergence,
+              channelPosition: baseItem.channelPosition,
+              atrPct: baseItem.atrPct,
+              volumeStatus: baseItem.volumeStatus,
+              riskRewardRatio: baseItem.riskRewardRatio,
+              tp1Price: baseItem.tp1Price,
+              tp2Price: baseItem.tp2Price,
+              tp3Price: baseItem.tp3Price,
+              dcaBuyPrice: baseItem.dcaBuyPrice,
+              stopLossPrice: baseItem.stopLossPrice,
+            );
+          }).toList();
+
+          final aiPriority = (parsed['priority_actions'] as List<dynamic>?)
+                  ?.map((e) => e.toString().trim())
+                  .where((e) => e.isNotEmpty)
+                  .toList() ??
+              [];
+
+          final aiScore = (parsed['overall_health_score'] as num?)?.toInt();
+
+          return GroqAuditReport(
+            overallHealthScore: aiScore != null
+                ? ((aiScore + baseReport.overallHealthScore) ~/ 2).clamp(20, 99)
+                : baseReport.overallHealthScore,
+            diversificationStatus: parsed['diversification_status']?.toString() ?? baseReport.diversificationStatus,
+            marketRegime: baseReport.marketRegime,
+            totalValueUsd: baseReport.totalValueUsd,
+            totalInvestedUsd: baseReport.totalInvestedUsd,
+            totalPnlUsd: baseReport.totalPnlUsd,
+            totalPnlPct: baseReport.totalPnlPct,
+            cashPct: baseReport.cashPct,
+            cashUsd: baseReport.cashUsd,
+            corePct: baseReport.corePct,
+            coreUsd: baseReport.coreUsd,
+            altPct: baseReport.altPct,
+            altUsd: baseReport.altUsd,
+            futuresMarginUsd: baseReport.futuresMarginUsd,
+            futuresPnlUsd: baseReport.futuresPnlUsd,
+            topAssetSymbol: baseReport.topAssetSymbol,
+            topAssetSharePct: baseReport.topAssetSharePct,
+            cashReserveComment: (parsed['cash_reserve_comment']?.toString().trim().isNotEmpty ?? false)
+                ? parsed['cash_reserve_comment'].toString()
+                : baseReport.cashReserveComment,
+            riskSummary: (parsed['risk_summary']?.toString().trim().isNotEmpty ?? false)
+                ? parsed['risk_summary'].toString()
+                : baseReport.riskSummary,
+            strategicSummary: (parsed['strategic_summary']?.toString().trim().isNotEmpty ?? false)
+                ? parsed['strategic_summary'].toString()
+                : baseReport.strategicSummary,
+            priorityActions: aiPriority.isNotEmpty ? aiPriority : baseReport.priorityActions,
+            assetRecommendations: mergedRecs,
+            auditedAt: DateTime.now(),
+          );
         }
       } catch (_) {
-        // У разі збою мережі переходимо до детермінованого квант-аналізу
+        // У разі тайм-ауту чи офлайну повертаємо повний математичний квант-аудит
       }
     }
 
-    // Детермінований квант-аналіз (фолбек без Groq ключа або в офлайні)
-    return _generateDeterministicAudit(holdings, cashRatio);
+    return baseReport;
   }
 
   GroqAuditReport _generateDeterministicAudit(
     List<HoldingItem> holdings,
-    CashRatioInfo cashRatio,
-  ) {
-    int healthScore = 78;
-    if (cashRatio.cashPercentage < 10) healthScore -= 15;
-    if (cashRatio.cashPercentage > 50) healthScore -= 5;
+    CashRatioInfo cashRatio, {
+    double futuresMargin = 0.0,
+    double futuresPnl = 0.0,
+    List<BinancePositionItem> futuresPositions = const [],
+  }) {
+    // 1. Розрахунок структури капіталу
+    double cashUsd = 0.0;
+    double coreUsd = 0.0;
+    double altUsd = 0.0;
+    double spotInvestedUsd = 0.0;
+    double spotPnlUsd = 0.0;
 
-    // Перевірка концентрації
-    bool highConcentration = false;
     for (final h in holdings) {
-      if (h.symbol != 'BTC' && h.symbol != 'ETH' && h.sharePct > 40) {
-        highConcentration = true;
-        healthScore -= 10;
+      final sym = h.symbol.toUpperCase();
+      if (_stablecoins.contains(sym)) {
+        cashUsd += h.totalUsd;
+        spotInvestedUsd += h.totalUsd;
+      } else if (_coreAssets.contains(sym)) {
+        coreUsd += h.totalUsd;
+        spotInvestedUsd += (h.amount * h.avgEntryPrice);
+        spotPnlUsd += h.pnlUsd;
+      } else {
+        altUsd += h.totalUsd;
+        spotInvestedUsd += (h.amount * h.avgEntryPrice);
+        spotPnlUsd += h.pnlUsd;
+      }
+    }
+
+    final double totalSpotUsd = cashUsd + coreUsd + altUsd;
+    final double totalPortfolioUsd = totalSpotUsd + futuresMargin;
+    final double totalInvestedUsd = spotInvestedUsd + (futuresMargin - futuresPnl);
+    final double totalPnlUsd = spotPnlUsd + futuresPnl;
+    final double totalPnlPct = totalInvestedUsd > 0 ? ((totalPnlUsd / totalInvestedUsd) * 100.0) : 0.0;
+
+    final double denom = totalPortfolioUsd > 0 ? totalPortfolioUsd : 1.0;
+    final double cashPct = double.parse(((cashUsd / denom) * 100.0).toStringAsFixed(1));
+    final double corePct = double.parse(((coreUsd / denom) * 100.0).toStringAsFixed(1));
+    final double altPct = double.parse(((altUsd / denom) * 100.0).toStringAsFixed(1));
+
+    // Нормалізуємо частки монет відносно загального капіталу
+    final List<HoldingItem> normalized = holdings.map((h) {
+      final share = double.parse(((h.totalUsd / denom) * 100.0).toStringAsFixed(1));
+      return HoldingItem(
+        symbol: h.symbol,
+        amount: h.amount,
+        currentPrice: h.currentPrice,
+        totalUsd: h.totalUsd,
+        avgEntryPrice: h.avgEntryPrice,
+        pnlUsd: h.pnlUsd,
+        pnlPct: h.pnlPct,
+        chg24h: h.chg24h,
+        chg7d: h.chg7d,
+        chg30d: h.chg30d,
+        chg1y: h.chg1y,
+        sharePct: share,
+        sources: h.sources,
+        tpSl: h.tpSl,
+      );
+    }).toList()
+      ..sort((a, b) => b.totalUsd.compareTo(a.totalUsd));
+
+    final cryptoOnly = normalized.where((h) => !_stablecoins.contains(h.symbol.toUpperCase())).toList();
+    final targetAssets = cryptoOnly.isNotEmpty ? cryptoOnly : normalized;
+
+    String topAssetSymbol = '—';
+    double topAssetSharePct = 0.0;
+    if (targetAssets.isNotEmpty) {
+      topAssetSymbol = targetAssets.first.symbol;
+      topAssetSharePct = targetAssets.first.sharePct;
+    }
+
+    String marketRegime = '⚪ Нейтральний ринок BTC';
+    for (final h in normalized) {
+      if (h.tpSl.btcMarketRegime.isNotEmpty && !h.tpSl.btcMarketRegime.contains('аналізується')) {
+        marketRegime = h.tpSl.btcMarketRegime;
         break;
       }
     }
 
-    final String divStatus = highConcentration
-        ? 'СЛАБКА'
-        : (holdings.length >= 4 ? 'ДОБРА' : 'ПОМІРНА');
+    // 2. 4-факторна оцінка здоров'я портфеля (0-100)
+    // Фактор А: Ліквідність / Кеш-подушка (25 балів)
+    int liquidityScore = 22;
+    if (cashPct >= 15 && cashPct <= 40) {
+      liquidityScore = 25;
+    } else if (cashPct >= 8 && cashPct < 15) {
+      liquidityScore = 19;
+    } else if (cashPct < 8) {
+      liquidityScore = 11;
+    } else if (cashPct > 65) {
+      liquidityScore = 16;
+    }
 
+    // Фактор Б: Диверсифікація та Концентрація (25 балів)
+    int divScore = 22;
+    bool highAltConcentration = false;
+    double maxAltShare = 0.0;
+    String maxAltSym = '';
+    for (final h in cryptoOnly) {
+      if (!_coreAssets.contains(h.symbol.toUpperCase()) && h.sharePct > maxAltShare) {
+        maxAltShare = h.sharePct;
+        maxAltSym = h.symbol;
+      }
+    }
+    if (maxAltShare > 40.0) {
+      highAltConcentration = true;
+      divScore = 10;
+    } else if (maxAltShare > 28.0) {
+      highAltConcentration = true;
+      divScore = 15;
+    } else if (cryptoOnly.length >= 3 && corePct >= 20.0) {
+      divScore = 25;
+    } else if (cryptoOnly.length == 1 && cryptoOnly.first.totalUsd > 20) {
+      divScore = 15;
+    }
+
+    final String divStatus = maxAltShare > 40.0
+        ? 'ПЕРЕКІС ($maxAltSym ${maxAltShare.toStringAsFixed(0)}%)'
+        : (highAltConcentration
+            ? 'КОНЦЕНТРАЦІЯ'
+            : (cryptoOnly.length >= 4 ? 'ВІДМІННА' : (cryptoOnly.length >= 2 ? 'ДОБРА' : 'БАЗОВА')));
+
+    // Фактор В: Технічна якість позицій та R:R (25 балів)
+    int techScore = 20;
+    if (cryptoOnly.isNotEmpty) {
+      double avgRr = 0.0;
+      int overboughtUnfixed = 0;
+      for (final h in cryptoOnly) {
+        avgRr += h.tpSl.riskRewardRatio;
+        if (h.tpSl.rsi >= 72 && h.pnlPct > 15) overboughtUnfixed++;
+      }
+      avgRr /= cryptoOnly.length;
+      if (avgRr >= 2.2) {
+        techScore = 24;
+      } else if (avgRr < 1.4) {
+        techScore = 15;
+      }
+      if (overboughtUnfixed > 0) techScore -= 3;
+    }
+
+    // Фактор Г: Стійкість PnL та Ф'ючерсний ризик (25 балів)
+    int pnlScore = 20;
+    if (totalPnlPct >= 10) {
+      pnlScore = 24;
+    } else if (totalPnlPct <= -25) {
+      pnlScore = 13;
+    } else if (totalPnlPct < -10) {
+      pnlScore = 16;
+    }
+    for (final fp in futuresPositions) {
+      if (fp.leverage >= 15) {
+        pnlScore -= 5;
+        break;
+      }
+    }
+
+    final int healthScore = (liquidityScore + divScore + techScore + pnlScore).clamp(25, 98);
+
+    // 3. Поглиблений аудит кожної позиції
     final List<GroqAuditItem> recs = [];
-    for (final h in holdings.take(12)) {
+    final List<String> takeProfitSymbols = [];
+    final List<String> accumulateSymbols = [];
+    final List<String> reduceSymbols = [];
+
+    for (final h in targetAssets.take(15)) {
+      final sym = h.symbol.toUpperCase();
+      final isStable = _stablecoins.contains(sym);
+
+      if (isStable) {
+        recs.add(GroqAuditItem(
+          symbol: sym,
+          action: 'HOLD',
+          actionLabelUk: 'КЕШ-РЕЗЕРВ (DRY POWDER)',
+          riskLevel: 'LOW',
+          reason:
+              'Стейблкоїн-резерв на суму \$${h.totalUsd.toStringAsFixed(2)} (${h.sharePct}% портфеля). Забезпечує захист від просадок ринку та ліквідність для лімітних ордерів DCA.',
+          executionPlan:
+              'Утримувати як резерв ліквідності. Використовувати траншами по 25–30% для відкупу активів у зонах перепроданості (RSI < 38) або за сигналами вкладки AI-Радар.',
+          amount: h.amount,
+          currentPrice: 1.0,
+          avgEntryPrice: 1.0,
+          totalUsd: h.totalUsd,
+          sharePct: h.sharePct,
+          pnlUsd: 0.0,
+          pnlPct: 0.0,
+          rsi: 50.0,
+          rsiDivergence: 'Стабільний пег \$1.00',
+          channelPosition: 'Стейблкоїн-резерв',
+          atrPct: 0.2,
+          volumeStatus: 'Висока ліквідність',
+          riskRewardRatio: 5.0,
+          tp1Price: 1.0,
+          tp2Price: 1.0,
+          tp3Price: 1.0,
+          dcaBuyPrice: 1.0,
+          stopLossPrice: 0.98,
+        ));
+        continue;
+      }
+
+      final rsi = h.tpSl.rsi;
+      final rr = h.tpSl.riskRewardRatio;
+      final isOverbought = rsi >= 68 || (h.tpSl.bollingerUpper > 0 && h.currentPrice >= (h.tpSl.bollingerUpper * 0.98));
+      final isOversold = rsi <= 40 || (h.tpSl.bollingerLower > 0 && h.currentPrice <= (h.tpSl.bollingerLower * 1.02));
+      final hasBullDiv = h.tpSl.rsiDivergence.contains('Бичача');
+      final hasBearDiv = h.tpSl.rsiDivergence.contains('Ведмежа');
+      final isOverweightAlt = !_coreAssets.contains(sym) && h.sharePct > 35.0;
+
+      // Розрахунок нової середньої при доборі +35% обсягу на рівні DCA
+      final dcaPrice = h.tpSl.accumulatePrice > 0 ? h.tpSl.accumulatePrice : (h.currentPrice * 0.92);
+      final newAvgAfterDca = h.avgEntryPrice > 0
+          ? (((h.amount * h.avgEntryPrice) + (h.amount * 0.35 * dcaPrice)) / (h.amount * 1.35))
+          : dcaPrice;
+
+      final tp1PctGain = h.currentPrice > 0 ? (((h.tpSl.tp1 - h.currentPrice) / h.currentPrice) * 100.0) : 20.0;
+      final tp2PctGain = h.currentPrice > 0 ? (((h.tpSl.tp2 - h.currentPrice) / h.currentPrice) * 100.0) : 45.0;
+      final slPctRisk = h.currentPrice > 0 ? (((h.currentPrice - h.tpSl.stopLoss) / h.currentPrice) * 100.0) : 10.0;
+
       String action = 'HOLD';
-      String risk = 'MEDIUM';
+      String actionLabelUk = 'УТРИМУВАТИ В СТРУКТУРІ';
+      String risk = 'LOW';
       String reason = '';
+      String executionPlan = '';
 
-      final isOverbought = h.tpSl.rsi >= 70 || (h.tpSl.bollingerUpper > 0 && h.currentPrice >= (h.tpSl.bollingerUpper * 0.98));
-      final isOversold = h.tpSl.rsi <= 35 || (h.tpSl.bollingerLower > 0 && h.currentPrice <= (h.tpSl.bollingerLower * 1.02));
-      final hasBullishDiv = h.tpSl.rsiDivergence.contains('Бичача');
-
-      if (h.sharePct > 40 && h.symbol != 'BTC' && h.symbol != 'ETH') {
+      if (isOverweightAlt) {
         action = 'REDUCE';
+        actionLabelUk = 'СКОРОТИТИ КОНЦЕНТРАЦІЮ';
         risk = 'HIGH';
-        reason = 'Частка ${h.sharePct.toStringAsFixed(1)}% перевищує допустимий ліміт. Рекомендовано знизити позицію.';
-      } else if (isOverbought || h.pnlPct >= 50) {
+        reduceSymbols.add('$sym (${h.sharePct}%)');
+        final targetTrimUsd = ((h.sharePct - 22.0).clamp(5.0, 50.0) / 100.0) * totalPortfolioUsd;
+        reason =
+            'Позиція займає ${h.sharePct.toStringAsFixed(1)}% портфеля (\$${h.totalUsd.toStringAsFixed(2)}), що створює надмірний ризик на один альткоїн. '
+            'Середня ціна закупки: \$${_fmtPrice(h.avgEntryPrice)}, поточний результат: ${h.pnlPct >= 0 ? '+' : ''}${h.pnlPct.toStringAsFixed(2)}% (${h.pnlUsd >= 0 ? '+' : '-'}\$${h.pnlUsd.abs().toStringAsFixed(2)}). '
+            'RSI(14D): ${rsi.toStringAsFixed(1)}, положення: ${h.tpSl.positionInChannel}.';
+        executionPlan =
+            'Розвантажити приблизно \$${targetTrimUsd.toStringAsFixed(0)} на поточному рівні або лімітним ордером біля TP1 \$${_fmtPrice(h.tpSl.tp1)} (+${tp1PctGain.toStringAsFixed(1)}%), перевівши вивільнений капітал у USDT або BTC/ETH. '
+            'Захисний Stop-Loss для залишку тримати на \$${_fmtPrice(h.tpSl.stopLoss)} (-${slPctRisk.toStringAsFixed(1)}%).';
+      } else if (isOverbought || hasBearDiv || h.pnlPct >= 40.0) {
         action = 'TAKE_PROFIT';
+        actionLabelUk = 'ФІКСУВАТИ ЧАСТИНУ TP';
         risk = 'MEDIUM';
-        reason = 'Перегрів (RSI ${h.tpSl.rsi.toStringAsFixed(1)}, біля верхнього Боллінджера). Фіксуйте 30% на Шар 1 (\$${h.tpSl.tp1.toStringAsFixed(2)}).';
-      } else if (isOversold || hasBullishDiv) {
+        takeProfitSymbols.add(sym);
+        final fix30Usd = h.totalUsd * 0.30;
+        reason =
+            'Актив у плюсі на +${h.pnlPct.toStringAsFixed(2)}% (+\$${h.pnlUsd.abs().toStringAsFixed(2)}) від ціни входу \$${_fmtPrice(h.avgEntryPrice)}. '
+            'Індикатори сигналізують локальний перегрів: RSI ${rsi.toStringAsFixed(1)}${hasBearDiv ? ', наявна ведмежа дивергенція' : ''}, ціна біля верхньої межі каналу. '
+            'Співвідношення R:R для нових покупок зараз знижене ($rr:1).';
+        executionPlan =
+            '1) Зафіксувати 30% позиції (~\$${fix30Usd.toStringAsFixed(0)}) на рівні Шар 1: \$${_fmtPrice(h.tpSl.tp1)} (+${tp1PctGain.toStringAsFixed(1)}%). '
+            '2) Перенести Stop-Loss у зону беззбитку (\$${_fmtPrice(h.avgEntryPrice)}). '
+            '3) Наступні 35% виставити лімітом на Шар 2: \$${_fmtPrice(h.tpSl.tp2)} (+${tp2PctGain.toStringAsFixed(1)}%).';
+      } else if (isOversold || hasBullDiv || (h.pnlPct <= -8.0 && rr >= 1.8)) {
         action = 'ACCUMULATE';
-        risk = h.tpSl.riskRewardRatio >= 1.5 ? 'MEDIUM' : 'HIGH';
-        reason = '${hasBullishDiv ? 'Бичача дивергенція! ' : ''}Зона накопичення (RSI ${h.tpSl.rsi.toStringAsFixed(1)}). Рівень закупки: \$${h.tpSl.accumulatePrice.toStringAsFixed(2)}. ${h.tpSl.riskRewardLabel}.';
+        actionLabelUk = 'ДОБИРАТИ НА СПАДІ (DCA)';
+        risk = rr >= 1.8 ? 'LOW' : 'MEDIUM';
+        accumulateSymbols.add('$sym (\$${_fmtPrice(dcaPrice)})');
+        reason =
+            '${hasBullDiv ? 'Виявлено бичачу дивергенцію RSI! ' : ''}Монета знаходиться у зоні дисконту (RSI ${rsi.toStringAsFixed(1)}, ${h.tpSl.positionInChannel}). '
+            'Ваша ціна закупки: \$${_fmtPrice(h.avgEntryPrice)}, поточне відхилення: ${h.pnlPct >= 0 ? '+' : ''}${h.pnlPct.toStringAsFixed(2)}%. '
+            'Математичне співвідношення Прибуток/Ризик вигідне ($rr:1), волатильність ATR становить ${h.tpSl.atrPct}%.';
+        executionPlan =
+            '1) Виставити лімітний ордер на добір у зоні підтримки \$${_fmtPrice(dcaPrice)} — це покращить вашу середню ціну входу з \$${_fmtPrice(h.avgEntryPrice)} до ~\$${_fmtPrice(newAvgAfterDca)}. '
+            '2) Ціль розвантаження №1 (30% обсягу): \$${_fmtPrice(h.tpSl.tp1)} (+${tp1PctGain.toStringAsFixed(1)}%). '
+            '3) Ціль №2 (35% обсягу): \$${_fmtPrice(h.tpSl.tp2)} (+${tp2PctGain.toStringAsFixed(1)}%). Захисний стоп за структурою: \$${_fmtPrice(h.tpSl.stopLoss)}.';
+      } else if (h.pnlPct <= -16.0 && rr < 1.4) {
+        action = 'STOP_WATCH';
+        actionLabelUk = 'КОНТРОЛЬ СТОПУ / БЕЗ ДОБОРУ';
+        risk = 'HIGH';
+        reason =
+            'Позиція у просадці ${h.pnlPct.toStringAsFixed(2)}% (вхід \$${_fmtPrice(h.avgEntryPrice)} проти ринку \$${_fmtPrice(h.currentPrice)}), при цьому поточний R:R слабкий ($rr:1). '
+            'Усереднювати по поточній ціні передчасно — треба дочекатися підтвердження покупця.';
+        executionPlan =
+            'Тимчасово утриматися від ринкових докупок. Дозволений лише глибокий лімітний відкуп на рівні \$${_fmtPrice(dcaPrice)} при появі зеленої свічки викупу. '
+            'Критичний рівень інвалідації структури (Stop-Loss): \$${_fmtPrice(h.tpSl.stopLoss)} (-${slPctRisk.toStringAsFixed(1)}%). На відскоку до \$${_fmtPrice(h.tpSl.tp1)} скоротити 30% позиції.';
       } else {
         action = 'HOLD';
-        risk = 'LOW';
-        reason = '${h.tpSl.positionInChannel}. RSI: ${h.tpSl.rsi.toStringAsFixed(1)}. ${h.tpSl.riskRewardLabel}. Ціль TP 1: \$${h.tpSl.tp1.toStringAsFixed(2)}.';
+        actionLabelUk = 'УТРИМУВАТИ ДО TP1/TP2';
+        risk = rr >= 1.6 ? 'LOW' : 'MEDIUM';
+        reason =
+            'Здорова технічна структура: ${h.tpSl.positionInChannel}, RSI ${rsi.toStringAsFixed(1)}, ${h.tpSl.volumeStatus}. '
+            'Ціна входу \$${_fmtPrice(h.avgEntryPrice)}, поточний PnL: ${h.pnlPct >= 0 ? '+' : ''}${h.pnlPct.toStringAsFixed(2)}% (${h.pnlUsd >= 0 ? '+' : '-'}\$${h.pnlUsd.abs().toStringAsFixed(2)}). '
+            'Потенціал руху до опору дає робочий R:R ($rr:1).';
+        executionPlan =
+            'Утримувати позицію в рамках тренду. Виставити лімітний Take-Profit №1 (30% обсягу) на \$${_fmtPrice(h.tpSl.tp1)} (+${tp1PctGain.toStringAsFixed(1)}%) та Take-Profit №2 (35%) на \$${_fmtPrice(h.tpSl.tp2)} (+${tp2PctGain.toStringAsFixed(1)}%). '
+            'Рівень добору на випадок проливу: \$${_fmtPrice(dcaPrice)}. Структурний стоп: \$${_fmtPrice(h.tpSl.stopLoss)} (-${slPctRisk.toStringAsFixed(1)}%).';
       }
 
       recs.add(GroqAuditItem(
-        symbol: h.symbol,
+        symbol: sym,
         action: action,
+        actionLabelUk: actionLabelUk,
         riskLevel: risk,
         reason: reason,
+        executionPlan: executionPlan,
+        amount: h.amount,
+        currentPrice: h.currentPrice,
+        avgEntryPrice: h.avgEntryPrice,
+        totalUsd: h.totalUsd,
+        sharePct: h.sharePct,
+        pnlUsd: h.pnlUsd,
+        pnlPct: h.pnlPct,
+        rsi: rsi,
+        rsiDivergence: h.tpSl.rsiDivergence,
+        channelPosition: h.tpSl.positionInChannel,
+        atrPct: h.tpSl.atrPct,
+        volumeStatus: h.tpSl.volumeStatus,
+        riskRewardRatio: rr,
+        tp1Price: h.tpSl.tp1,
+        tp2Price: h.tpSl.tp2,
+        tp3Price: h.tpSl.tp3,
+        dcaBuyPrice: dcaPrice,
+        stopLossPrice: h.tpSl.stopLoss,
       ));
     }
 
+    // 4. Формуємо чіткий чек-лист першочергових дій трейдера
+    final List<String> priorityActions = [];
+    if (reduceSymbols.isNotEmpty) {
+      priorityActions.add(
+        'Ребалансування концентрації: знизити надмірну вагу в ${reduceSymbols.join(', ')} на найближчому імпульсі до TP1, перевівши частину в USDT або BTC.',
+      );
+    }
+    if (takeProfitSymbols.isNotEmpty) {
+      priorityActions.add(
+        'Фіксація прибутку: виставити лімітні ордери на продаж 30% позиції по ${takeProfitSymbols.join(', ')} на рівнях Шар 1 (TP1) та перевести стопи в беззбиток.',
+      );
+    }
+    if (accumulateSymbols.isNotEmpty) {
+      priorityActions.add(
+        'Розумний DCA-добір: розмістити лімітні ордери на відкуп дна по ${accumulateSymbols.take(3).join(', ')} для зниження середньої ціни закупки.',
+      );
+    }
+    if (cashPct < 12.0) {
+      priorityActions.add(
+        'Поповнення кеш-подушки: частка стейблкоїнів становить лише $cashPct% (\$${cashUsd.toStringAsFixed(2)}). Спрямовуйте всі фіксації TP1 у USDT до досягнення резерву 20–25%.',
+      );
+    } else if (cashPct > 55.0) {
+      priorityActions.add(
+        'Робота з вільним кешем: у стейблкоїнах зосереджено $cashPct% (\$${cashUsd.toStringAsFixed(2)}). Використайте вкладку AI-Радар для поетапного набору недооцінених активів із R:R >= 1:3.',
+      );
+    }
+    if (priorityActions.isEmpty) {
+      priorityActions.add(
+        'Утримувати поточну структуру портфеля: виставити каскадні Take-Profit ордери (TP1 30% / TP2 35%) та контролювати захисні стоп-рівні за денними свічками.',
+      );
+    }
+
+    // 5. Коментар по кеш-подушці та аналіз ризиків
+    final String cashComment = cashPct < 10.0
+        ? 'Критично низький запас кешу: $cashPct% (\$${cashUsd.toStringAsFixed(2)}). У разі проливу ринку на 15–20% вам бракуватиме вільної ліквідності для вигідного усереднення. Пріоритет — фіксація TP1 у стейблкоїни.'
+        : (cashPct <= 35.0
+            ? 'Оптимальна інституційна кеш-подушка: $cashPct% (\$${cashUsd.toStringAsFixed(2)}). У вас достатньо «сухого пороху» для викупу локальних просадок за сіткою DCA без перевантаження ризиком.'
+            : 'Високий захисний резерв у кеші: $cashPct% (\$${cashUsd.toStringAsFixed(2)}). Портфель максимально захищений від дампів і готовий до набору спотових сетапів із вкладки AI-Радар.');
+
+    String riskSummary =
+        'Розподіл капіталу: Фундамент (BTC/ETH) — $corePct% (\$${coreUsd.toStringAsFixed(2)}), Альткоїни — $altPct% (\$${altUsd.toStringAsFixed(2)}), Стейблкоїни — $cashPct% (\$${cashUsd.toStringAsFixed(2)}). ';
+    if (highAltConcentration) {
+      riskSummary +=
+          'Виявлено підвищений ризик концентрації в $maxAltSym (${maxAltShare.toStringAsFixed(1)}% портфеля) — рекомендовано поступову диверсифікацію. ';
+    } else {
+      riskSummary += 'Вага окремих альткоїнів збалансована і не створює критичної загрози для капіталу. ';
+    }
+    if (futuresMargin > 0) {
+      riskSummary +=
+          'Відкрита ф\'ючерсна маржа: \$${futuresMargin.toStringAsFixed(2)} (поточний PnL: ${futuresPnl >= 0 ? '+' : ''}\$${futuresPnl.toStringAsFixed(2)}, активних позицій: ${futuresPositions.length}).';
+    }
+
+    final String strategicSummary =
+        'Загальний баланс портфеля становить \$${totalPortfolioUsd.toStringAsFixed(2)} при вкладеному капіталі \$${totalInvestedUsd.toStringAsFixed(2)} '
+        '(сумарний результат: ${totalPnlUsd >= 0 ? '+' : '-'}\$${totalPnlUsd.abs().toStringAsFixed(2)} або ${totalPnlPct >= 0 ? '+' : ''}${totalPnlPct.toStringAsFixed(2)}%). '
+        '${highAltConcentration ? 'Головний фокус зараз — зменшити перекіс в окремих альткоїнах через часткову фіксацію на рівнях опору Боллінджера.' : 'Структура портфеля дозволяє комбінувати утримання сильних трендових позицій до TP1/TP2 з лімітним добором недооцінених монет на рівнях підтримки.'}';
+
     return GroqAuditReport(
-      overallHealthScore: healthScore.clamp(20, 100),
+      overallHealthScore: healthScore,
       diversificationStatus: divStatus,
-      cashReserveComment: cashRatio.aiAdvice,
+      marketRegime: marketRegime,
+      totalValueUsd: double.parse(totalPortfolioUsd.toStringAsFixed(2)),
+      totalInvestedUsd: double.parse(totalInvestedUsd.toStringAsFixed(2)),
+      totalPnlUsd: double.parse(totalPnlUsd.toStringAsFixed(2)),
+      totalPnlPct: double.parse(totalPnlPct.toStringAsFixed(2)),
+      cashPct: cashPct,
+      cashUsd: double.parse(cashUsd.toStringAsFixed(2)),
+      corePct: corePct,
+      coreUsd: double.parse(coreUsd.toStringAsFixed(2)),
+      altPct: altPct,
+      altUsd: double.parse(altUsd.toStringAsFixed(2)),
+      futuresMarginUsd: double.parse(futuresMargin.toStringAsFixed(2)),
+      futuresPnlUsd: double.parse(futuresPnl.toStringAsFixed(2)),
+      topAssetSymbol: topAssetSymbol,
+      topAssetSharePct: topAssetSharePct,
+      cashReserveComment: cashComment,
+      riskSummary: riskSummary,
+      strategicSummary: strategicSummary,
+      priorityActions: priorityActions,
       assetRecommendations: recs,
-      strategicSummary: highConcentration
-          ? 'У портфелі присутній ризик концентрації. Використовуйте Смуги Боллінджера для фіксації прибутку по шарах у стейблкоїни.'
-          : 'Аналіз 1D свічок: активи знаходяться у розрахункових технічних коридорах. Дотримуйтесь сітки Take-Profit (шари 1-3) та виставляйте ліміти на відкуп у зонах накопичення.',
+      auditedAt: DateTime.now(),
     );
+  }
+
+  String _defaultActionLabelUk(String action) {
+    switch (action.toUpperCase()) {
+      case 'TAKE_PROFIT':
+        return 'ФІКСУВАТИ ЧАСТИНУ TP';
+      case 'ACCUMULATE':
+        return 'ДОБИРАТИ НА СПАДІ (DCA)';
+      case 'REDUCE':
+        return 'СКОРОТИТИ КОНЦЕНТРАЦІЮ';
+      case 'STOP_WATCH':
+        return 'КОНТРОЛЬ СТОПУ';
+      default:
+        return 'УТРИМУВАТИ ДО TP1/TP2';
+    }
+  }
+
+  String _fmtPrice(double val) {
+    if (val >= 1000) return val.toStringAsFixed(2);
+    if (val >= 1) return val.toStringAsFixed(2);
+    if (val >= 0.01) return val.toStringAsFixed(4);
+    if (val > 0) return val.toStringAsFixed(6);
+    return '0.00';
   }
 
   /// Мультиагентний AI-аналіз кандидатів для формування звіту «AI-Радар»
   Future<AiMarketRadarReport> analyzeMarketOpportunities({
     required List<Map<String, dynamic>> candidates,
     required int totalCoinsScanned,
+    String btcTrendContext = 'Консолідація',
   }) async {
     if (candidates.isEmpty) {
       return AiMarketRadarReport(
         scannedAt: DateTime.now(),
         marketRegime: 'Нейтральний ринок',
-        btcTrend: 'Консолідація',
-        macroSummary: 'Не знайдено сильних сетапів перепроданості з достатньою ліквідністю на даний момент.',
+        btcTrend: btcTrendContext,
+        macroSummary: 'Квантовий скринер не виявив сетапів із підтвердженим викупом Smart Money та співвідношенням R:R >= 1:2.6.',
         totalCoinsScanned: totalCoinsScanned,
         opportunities: const [],
       );
@@ -233,39 +797,37 @@ ${json.encode(summaryAssets)}
     if (isConfigured) {
       try {
         const systemPrompt = '''
-Ти — Висококласний Мультиагентний Інвестиційний Комітет з криптовалют.
-Твоє завдання — проаналізувати технічні дані відібраних кандидатів у глибоких просадках на Binance Spot і відібрати найкращі 3-6 монет для середньострокового накопичення (DCA на 3-6 місяців).
-Для кожної монети обов'язково розрахуй:
-- entry_zone_min та entry_zone_max (діапазон безпечної закупки частинами)
-- target_price_1 (+25%..+40%) та target_price_2 (+60%..+120%)
-- stop_loss (скасування сетапу, -12%..-18%)
-- risk_reward_ratio (мінімум 1:3)
-- sector (AI & Big Data, Layer 1, RWA, DePIN, DeFi, Gaming тощо)
-- technical_reason, smart_money_catalyst, dca_strategy (все українською мовою, конкретно і професійно).
+Ти — Інституційний Мультиагентний Комітет Алготрейдерів (Квантовий Аналітик, Аналітик Order Flow & Smart Money та Ризик-Архітектор).
+Тобі передані кандидати з Binance Spot, які вже пройшли 5-факторний математичний відбір (Order Flow Taker Buy Ratio, бичача дивергенція, ATR волатильність, рівні Фібоначчі 0.382/0.618, структурний Support та Stop-Loss за рівнем підтримки мінус 1.2×ATR).
+
+Твоє завдання — проаналізувати ці монети та сформувати професійний інвестиційний звіт українською мовою.
+ВАЖЛИВО:
+1. Використовуй вже розраховані математичні рівні з вхідних даних (`entryZoneMin`, `entryZoneMax`, `targetPrice1`, `targetPrice2`, `stopLoss`, `riskRewardRatio`), не вигадуй випадкові ціни.
+2. Для кожної монети детально поясни:
+   - `technical_reason`: структура графіка, поведінка RSI, відбій від підтримки, EMA/Bollinger Squeeze.
+   - `smart_money_catalyst`: аналіз потоку ордерів (`takerBuyRatioPct` — частка агресивних покупок по ринку), OBV, відносна сила проти BTC (`rs7dVsBtc`).
+   - `dca_strategy`: як саме розбити вхід ордерами між `entryZoneMax` та `entryZoneMin`.
+   - `tp_trigger_rule`: чіткий алгоритм фіксації прибутку на TP1 (скільки % закрити + перенесення стопа в Беззбиток), на TP2 та за яким індикатором виходити достроково (наприклад, RSI > 74 або кульмінація обсягів).
+   - `sl_trigger_rule`: чітка умова виходу в мінус на рівні `stopLoss` (закриття тіла свічки 4H/1D нижче рівня підтримки з буфером 1.2×ATR, щоб уникнути хибного вибивання шпилькою маркет-мейкера).
 
 ВІДПОВІДЬ НАДАЙ ВИКЛЮЧНО В ЧИСТОМУ JSON БЕЗ МАРКДАУНУ (RAW JSON):
 {
-  "market_regime": "Зона вигідного накопичення альткоїнів",
-  "btc_trend": "Консолідація над 50 SMA / Накопичення",
-  "macro_summary": "Стратегічний коментар для інвестора українською мовою...",
+  "market_regime": "ACCUMULATION",
+  "btc_trend": "Консолідація вище підтримки",
+  "macro_summary": "Розгорнутий професійний огляд ринку та логіки відбору...",
   "opportunities": [
     {
       "symbol": "NEAR",
       "name": "NEAR Protocol",
       "sector": "AI & Layer 1",
-      "current_price": 4.25,
-      "entry_zone_min": 3.90,
-      "entry_zone_max": 4.30,
-      "target_price_1": 5.80,
-      "target_price_2": 7.50,
-      "stop_loss": 3.45,
-      "potential_pct": 76.5,
-      "risk_reward_ratio": 4.1,
-      "risk_level": "Помірний",
-      "confidence_score": 88,
-      "technical_reason": "RSI 32 біля нижньої смуги Боллінджера з формуванням бичачої дивергенції.",
-      "smart_money_catalyst": "Різке збільшення обсягів на просадці, ознаки поглинання ліквідності смарт-мані.",
-      "dca_strategy": "Сітка в 3 кроки: 35% за поточною ціною, 35% при тесті підтримки, 30% на підтвердженні розвороту."
+      "setup_type": "Поглинання китів (Order Flow)",
+      "risk_level": "Низький",
+      "confidence_score": 89,
+      "technical_reason": " Детальний технічний розбір...",
+      "smart_money_catalyst": "Детальний розбір Taker Buy Volume та OBV...",
+      "dca_strategy": "План набору позиції...",
+      "tp_trigger_rule": "Коли і як фіксувати TP1 та TP2...",
+      "sl_trigger_rule": "Коли і як виконувати Stop-Loss..."
     }
   ]
 }
@@ -273,7 +835,8 @@ ${json.encode(summaryAssets)}
 
         final userPrompt = json.encode({
           'total_scanned_pairs': totalCoinsScanned,
-          'filtered_quant_candidates': candidates,
+          'btc_trend_context': btcTrendContext,
+          'quant_candidates': candidates,
         });
 
         final response = await http.post(
@@ -303,38 +866,48 @@ ${json.encode(summaryAssets)}
 
           for (final o in rawOpps) {
             final sym = o['symbol']?.toString().toUpperCase() ?? '';
-            final currPrice = (o['current_price'] as num?)?.toDouble() ?? 0.0;
-            final entryMin = (o['entry_zone_min'] as num?)?.toDouble() ?? currPrice * 0.95;
-            final entryMax = (o['entry_zone_max'] as num?)?.toDouble() ?? currPrice * 1.02;
-            final tp1 = (o['target_price_1'] as num?)?.toDouble() ?? currPrice * 1.3;
-            final tp2 = (o['target_price_2'] as num?)?.toDouble() ?? currPrice * 1.6;
-            final sl = (o['stop_loss'] as num?)?.toDouble() ?? currPrice * 0.85;
-
             final candidateMatch = candidates.firstWhere(
               (c) => c['symbol'] == sym,
               orElse: () => <String, dynamic>{},
             );
+            if (candidateMatch.isEmpty) continue;
+
+            final currPrice = (candidateMatch['currentPrice'] as num?)?.toDouble() ?? 1.0;
+            final supportLvl = (candidateMatch['supportLevel'] as num?)?.toDouble() ?? currPrice * 0.92;
+            final entryMin = (candidateMatch['entryZoneMin'] as num?)?.toDouble() ?? currPrice * 0.94;
+            final entryMax = (candidateMatch['entryZoneMax'] as num?)?.toDouble() ?? currPrice * 1.005;
+            final tp1 = (candidateMatch['targetPrice1'] as num?)?.toDouble() ?? currPrice * 1.25;
+            final tp2 = (candidateMatch['targetPrice2'] as num?)?.toDouble() ?? currPrice * 1.55;
+            final sl = (candidateMatch['stopLoss'] as num?)?.toDouble() ?? currPrice * 0.88;
+            final rr = (candidateMatch['riskRewardRatio'] as num?)?.toDouble() ?? 3.5;
+            final tp2Pct = (candidateMatch['tp2Pct'] as num?)?.toDouble() ?? (((tp2 - currPrice) / currPrice) * 100.0);
 
             opps.add(AiMarketOpportunity(
               symbol: sym,
               name: o['name']?.toString() ?? sym,
               sector: o['sector']?.toString() ?? 'Altcoin',
-              currentPrice: currPrice > 0 ? currPrice : (candidateMatch['currentPrice'] as double? ?? 1.0),
+              setupType: o['setup_type']?.toString() ?? candidateMatch['setupType']?.toString() ?? 'Накопичення Smart Money',
+              currentPrice: currPrice,
+              supportLevel: supportLvl,
               entryZoneMin: entryMin,
               entryZoneMax: entryMax,
               targetPrice1: tp1,
               targetPrice2: tp2,
               stopLoss: sl,
-              potentialPct: (o['potential_pct'] as num?)?.toDouble() ?? (((tp2 - currPrice) / (currPrice > 0 ? currPrice : 1.0)) * 100),
-              riskRewardRatio: (o['risk_reward_ratio'] as num?)?.toDouble() ?? 3.5,
+              potentialPct: tp2Pct,
+              riskRewardRatio: rr,
               riskLevel: o['risk_level']?.toString() ?? 'Помірний',
-              confidenceScore: (o['confidence_score'] as num?)?.toInt() ?? 80,
-              technicalReason: o['technical_reason']?.toString() ?? 'Технічна перепроданість та відбій від підтримки.',
-              smartMoneyCatalyst: o['smart_money_catalyst']?.toString() ?? 'Підвищений торговий інтерес на консолідації.',
-              dcaStrategy: o['dca_strategy']?.toString() ?? 'Вхід частинами в діапазоні підтримки.',
-              rsi: (candidateMatch['rsi'] as num?)?.toDouble() ?? 38.0,
-              dropFromPeakPct: (candidateMatch['dropFromPeakPct'] as num?)?.toDouble() ?? 45.0,
+              confidenceScore: (o['confidence_score'] as num?)?.toInt() ?? (candidateMatch['alphaScore'] as num?)?.toInt() ?? 82,
+              technicalReason: o['technical_reason']?.toString() ?? 'Підтверджений розворот від структурної підтримки.',
+              smartMoneyCatalyst: o['smart_money_catalyst']?.toString() ?? 'Активне поглинання пропозиції покупцями по ринку.',
+              dcaStrategy: o['dca_strategy']?.toString() ?? 'Вхід 2-3 траншами в діапазоні підтримки.',
+              tpTriggerRule: o['tp_trigger_rule']?.toString() ?? candidateMatch['tpTriggerRule']?.toString() ?? '',
+              slTriggerRule: o['sl_trigger_rule']?.toString() ?? candidateMatch['slTriggerRule']?.toString() ?? '',
+              rsi: (candidateMatch['rsi'] as num?)?.toDouble() ?? 40.0,
+              dropFromPeakPct: (candidateMatch['dropFromPeakPct'] as num?)?.toDouble() ?? 35.0,
               volume24hUsd: (candidateMatch['quoteVolume'] as num?)?.toDouble() ?? 5000000.0,
+              takerBuyRatioPct: (candidateMatch['takerBuyRatioPct'] as num?)?.toDouble() ?? 52.0,
+              atrPct: (candidateMatch['atrPct'] as num?)?.toDouble() ?? 4.5,
               scannedAt: DateTime.now(),
             ));
           }
@@ -342,9 +915,9 @@ ${json.encode(summaryAssets)}
           if (opps.isNotEmpty) {
             return AiMarketRadarReport(
               scannedAt: DateTime.now(),
-              marketRegime: parsed['market_regime']?.toString() ?? 'Зона накопичення альткоїнів',
-              btcTrend: parsed['btc_trend']?.toString() ?? 'Консолідація',
-              macroSummary: parsed['macro_summary']?.toString() ?? 'Формуються сприятливі умови для середньострокового DCA.',
+              marketRegime: parsed['market_regime']?.toString() ?? 'ACCUMULATION',
+              btcTrend: parsed['btc_trend']?.toString() ?? btcTrendContext,
+              macroSummary: parsed['macro_summary']?.toString() ?? 'Відібрані активи демонструють накопичення Smart Money та високе співвідношення R:R.',
               totalCoinsScanned: totalCoinsScanned,
               opportunities: opps,
             );
@@ -353,60 +926,118 @@ ${json.encode(summaryAssets)}
       } catch (_) {}
     }
 
-    // Резервний алгоритмічний розрахунок
-    return _generateFallbackRadarReport(candidates, totalCoinsScanned);
+    // Резервний алгоритмічний звіт на базі чистої квантової математики
+    return _generateFallbackRadarReport(candidates, totalCoinsScanned, btcTrendContext);
   }
 
   AiMarketRadarReport _generateFallbackRadarReport(
     List<Map<String, dynamic>> candidates,
     int totalCoinsScanned,
+    String btcTrendContext,
   ) {
     final List<AiMarketOpportunity> opps = [];
 
-    for (final c in candidates.take(5)) {
+    for (final c in candidates.take(6)) {
       final sym = c['symbol']?.toString().toUpperCase() ?? '';
+      final setupType = c['setupType']?.toString() ?? 'Накопичення Smart Money';
       final price = (c['currentPrice'] as num?)?.toDouble() ?? 1.0;
+      final supportLvl = (c['supportLevel'] as num?)?.toDouble() ?? price * 0.92;
+      final entryMin = (c['entryZoneMin'] as num?)?.toDouble() ?? price * 0.94;
+      final entryMax = (c['entryZoneMax'] as num?)?.toDouble() ?? price * 1.005;
+      final tp1 = (c['targetPrice1'] as num?)?.toDouble() ?? price * 1.25;
+      final tp2 = (c['targetPrice2'] as num?)?.toDouble() ?? price * 1.55;
+      final sl = (c['stopLoss'] as num?)?.toDouble() ?? price * 0.88;
+      final tp2Pct = (c['tp2Pct'] as num?)?.toDouble() ?? (((tp2 - price) / price) * 100.0);
+      final rr = (c['riskRewardRatio'] as num?)?.toDouble() ?? 3.5;
       final rsi = (c['rsi'] as num?)?.toDouble() ?? 40.0;
-      final drop = (c['dropFromPeakPct'] as num?)?.toDouble() ?? 40.0;
+      final rsiDelta = (c['rsiDelta'] as num?)?.toDouble() ?? 0.0;
+      final drop = (c['dropFromPeakPct'] as num?)?.toDouble() ?? 35.0;
       final vol = (c['quoteVolume'] as num?)?.toDouble() ?? 5000000.0;
-
-      final tp1 = price * 1.35;
-      final tp2 = price * 1.75;
-      final sl = price * 0.85;
-      final rr = ((tp2 - price) / (price - sl)).clamp(1.5, 8.0);
+      final takerBuy = (c['takerBuyRatioPct'] as num?)?.toDouble() ?? 52.0;
+      final atrPct = (c['atrPct'] as num?)?.toDouble() ?? 4.5;
+      final rs7d = (c['rs7dVsBtc'] as num?)?.toDouble() ?? 0.0;
+      final alphaScore = (c['alphaScore'] as num?)?.toInt() ?? 82;
 
       opps.add(AiMarketOpportunity(
         symbol: sym,
         name: sym,
-        sector: 'Top Altcoin',
+        sector: 'Spot Alpha',
+        setupType: setupType,
         currentPrice: price,
-        entryZoneMin: price * 0.94,
-        entryZoneMax: price * 1.01,
+        supportLevel: supportLvl,
+        entryZoneMin: entryMin,
+        entryZoneMax: entryMax,
         targetPrice1: tp1,
         targetPrice2: tp2,
         stopLoss: sl,
-        potentialPct: 75.0,
-        riskRewardRatio: double.parse(rr.toStringAsFixed(1)),
-        riskLevel: rsi < 35 ? 'Низький' : 'Помірний',
-        confidenceScore: (80 + (drop > 50 ? 8 : 0)).clamp(60, 95),
-        technicalReason: 'RSI $rsi вказує на сильну перепроданість, дисконт від піку -$drop%.',
-        smartMoneyCatalyst: 'Стійкий добовий обсяг (\$${(vol / 1000000).toStringAsFixed(1)}M) сигналізує про викуп просадки.',
-        dcaStrategy: 'Рекомендовано DCA у 3 ордери: 40% зараз, 30% на -5%, 30% на -10%.',
+        potentialPct: tp2Pct,
+        riskRewardRatio: rr,
+        riskLevel: (takerBuy >= 52.0 && rsi < 45) ? 'Низький' : 'Помірний',
+        confidenceScore: alphaScore.clamp(65, 96),
+        technicalReason:
+            'Дисконт від 90D максимуму становить -$drop%. Денний RSI ($rsi, імпульс ${rsiDelta >= 0 ? '+' : ''}$rsiDelta) виходить із зони перепроданості з опорою на структурну підтримку (ATR волатильність $atrPct%).',
+        smartMoneyCatalyst:
+            'Аналіз Order Flow фіксує $takerBuy% агресивних ринкових покупок (Taker Buy Volume) при добовому обороті \$${(vol / 1000000).toStringAsFixed(1)}M. Відносна сила до BTC за 7 днів: ${rs7d >= 0 ? '+' : ''}$rs7d%.',
+        dcaStrategy:
+            'Каскадний набір у 3 ордери: 40% по поточній ціні, 35% лімітним ордером посередині зони входу та 25% біля рівня структурної підтримки.',
+        tpTriggerRule: c['tpTriggerRule']?.toString() ?? '',
+        slTriggerRule: c['slTriggerRule']?.toString() ?? '',
         rsi: rsi,
         dropFromPeakPct: drop,
         volume24hUsd: vol,
+        takerBuyRatioPct: takerBuy,
+        atrPct: atrPct,
         scannedAt: DateTime.now(),
       ));
     }
 
     return AiMarketRadarReport(
       scannedAt: DateTime.now(),
-      marketRegime: 'Зона стратегічного накопичення',
-      btcTrend: 'Ринковий баланс',
-      macroSummary: 'Квантовий скринер виявив монети з глибоким дисконтом від локальних максимумів та перепроданим RSI.',
+      marketRegime: 'ACCUMULATION',
+      btcTrend: btcTrendContext,
+      macroSummary:
+          '5-факторний алгоритм проаналізував Order Flow (Taker Buy), структуру підтримки, ATR-волатильність та рівні Фібоначчі по $totalCoinsScanned спотових парах. Відібрані активи мають підтверджений викуп дна та R:R не менше 1:2.6.',
       totalCoinsScanned: totalCoinsScanned,
       opportunities: opps,
     );
+  }
+
+  Future<AiMarketRadarReport> enrichRadarReport(AiMarketRadarReport report) async {
+    if (!isConfigured || report.opportunities.isEmpty) return report;
+    try {
+      final prompt = '''
+Ти — головний інституційний криптоаналітик. Коротко (2-3 речення) підсумуй ринкову картину для спотового радара:
+Режим: ${report.marketRegime}
+Тренд BTC: ${report.btcTrend}
+Знайдено сетапів: ${report.opportunities.length}
+Топові активи: ${report.opportunities.take(5).map((o) => o.symbol).join(', ')}
+Відповідай українською мовою лаконічно, без зайвих вступів.
+''';
+      final response = await http.post(
+        Uri.parse(_groqUrl),
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $apiKey',
+        },
+        body: jsonEncode({
+          'model': _model,
+          'messages': [
+            {'role': 'user', 'content': prompt}
+          ],
+          'temperature': 0.3,
+          'max_tokens': 300,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final content = data['choices']?[0]?['message']?['content']?.toString().trim();
+        if (content != null && content.isNotEmpty) {
+          return report.copyWith(macroSummary: content);
+        }
+      }
+    } catch (_) {}
+    return report;
   }
 }
 

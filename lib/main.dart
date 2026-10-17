@@ -14,12 +14,14 @@ import 'features/statistics/presentation/screens/statistics_screen.dart';
 import 'features/calories/presentation/screens/calories_screen.dart';
 import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/crypto/presentation/screens/crypto_screen.dart';
+import 'features/tasks/data/notification_expense_service.dart';
 import 'shared/widgets/main_scaffold.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService().init();
+  NotificationExpenseService().startListening();
   runApp(const ProviderScope(child: LifeStatisticsApp()));
 }
 

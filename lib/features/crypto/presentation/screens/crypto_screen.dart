@@ -22,6 +22,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
   int _binanceSubTab = 0; // 0: Spot, 1: Futures, 2: Earn
+  int _dcaFilterIndex = 0; // 0: Всі, 1: Binance, 2: Ручні
 
   @override
   void initState() {
@@ -451,7 +452,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: (isLong ? AppColors.greenTask : AppColors.redTask).withOpacity(0.15),
+                                color: (isLong ? AppColors.greenTask : AppColors.redTask).withValues(alpha: 0.15),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
@@ -555,7 +556,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                     decoration: BoxDecoration(
-                      color: AppColors.greenTask.withOpacity(0.15),
+                      color: AppColors.greenTask.withValues(alpha: 0.15),
                       borderRadius: BorderRadius.circular(4),
                     ),
                     child: Text(
@@ -702,7 +703,9 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     final totals = state.dcaTotals;
     final isPnlPositive = totals.totalPnlUsd >= 0;
     final pnlColor = isPnlPositive ? AppColors.greenTask : AppColors.redTask;
-    final groupedCoins = state.groupedDcaCoins;
+    final binanceCoins = state.binanceDcaCoins;
+    final manualCoins = state.manualDcaCoins;
+    final allCoins = state.groupedDcaCoins;
 
     return RefreshIndicator(
       color: AppColors.accent,
@@ -852,311 +855,1140 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
               ],
             ),
           ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
 
-          // 2. ЗАГОЛОВОК СПИСКУ МОНЕТ
+          // 2. ФІЛЬТР-СЕЛЕКТОР: ВСІ | BINANCE | РУЧНІ
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(
+              _buildDcaFilterChip(
+                label: 'Всі (${allCoins.length})',
+                isSelected: _dcaFilterIndex == 0,
+                onTap: () => setState(() => _dcaFilterIndex = 0),
+              ),
+              const SizedBox(width: 8),
+              _buildDcaFilterChip(
+                label: 'Binance (${binanceCoins.length})',
+                icon: Icons.currency_exchange_rounded,
+                iconColor: const Color(0xFFF3BA2F),
+                isSelected: _dcaFilterIndex == 1,
+                onTap: () => setState(() => _dcaFilterIndex = 1),
+              ),
+              const SizedBox(width: 8),
+              _buildDcaFilterChip(
+                label: 'Ручні (${manualCoins.length})',
+                icon: Icons.edit_note_rounded,
+                iconColor: AppColors.accentLight,
+                isSelected: _dcaFilterIndex == 2,
+                onTap: () => setState(() => _dcaFilterIndex = 2),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+
+          // 3. ВІДОБРАЖЕННЯ СПИСКУ ЗА ОБРАНИМ ФІЛЬТРОМ
+          if (_dcaFilterIndex == 1) ...[
+            // Фільтр: Тільки Binance
+            if (binanceCoins.isEmpty)
+              _buildEmptyState(
+                'Немає активних закупок з Binance.\n\nНатисніть кнопку "З Binance (FIFO)" вище для автоматичного розрахунку покупок та підтягування поточних активів.',
+              )
+            else ...[
+              _buildDcaSectionHeader(
+                title: '🟡 ЗАКУПКИ BINANCE',
+                count: binanceCoins.length,
+                subtitle: 'Синхронізовані ордери, конвертації та активні залишки',
+                accentColor: const Color(0xFFF3BA2F),
+              ),
+              ...binanceCoins.map((coin) => _DcaCoinExpandableCard(
+                    coin: coin,
+                    notifier: notifier,
+                  )),
+            ],
+          ] else if (_dcaFilterIndex == 2) ...[
+            // Фільтр: Тільки Ручні
+            if (manualCoins.isEmpty)
+              _buildEmptyState(
+                'Немає ручних DCA записів.\n\nНатисніть кнопку "Вручну", щоб додати покупку самостійно або зафіксувати вхід по монеті.',
+              )
+            else ...[
+              _buildDcaSectionHeader(
+                title: '✍️ РУЧНІ DCA ЗАПИСИ',
+                count: manualCoins.length,
+                subtitle: 'Транзакції додані користувачем вручну',
+                accentColor: AppColors.accentLight,
+              ),
+              ...manualCoins.map((coin) => _DcaCoinExpandableCard(
+                    coin: coin,
+                    notifier: notifier,
+                  )),
+            ],
+          ] else ...[
+            // Фільтр: Всі (Розділені секціями)
+            if (allCoins.isEmpty)
+              _buildEmptyState(
+                'Немає активних покупок.\n\nНатисніть "З Binance (FIFO)" для завантаження з біржі або "Вручну" щоб додати нову купівлю.',
+              )
+            else ...[
+              if (binanceCoins.isNotEmpty) ...[
+                _buildDcaSectionHeader(
+                  title: '🟡 ЗАКУПКИ BINANCE',
+                  count: binanceCoins.length,
+                  subtitle: 'Синхронізовано з Binance (Спот / Convert FIFO)',
+                  accentColor: const Color(0xFFF3BA2F),
+                ),
+                ...binanceCoins.map((coin) => _DcaCoinExpandableCard(
+                      coin: coin,
+                      notifier: notifier,
+                    )),
+              ],
+              if (binanceCoins.isNotEmpty && manualCoins.isNotEmpty)
+                const SizedBox(height: 16),
+              if (manualCoins.isNotEmpty) ...[
+                _buildDcaSectionHeader(
+                  title: '✍️ РУЧНІ DCA ЗАПИСИ',
+                  count: manualCoins.length,
+                  subtitle: 'Додані самостійно користувачем',
+                  accentColor: AppColors.accentLight,
+                ),
+                ...manualCoins.map((coin) => _DcaCoinExpandableCard(
+                      coin: coin,
+                      notifier: notifier,
+                    )),
+              ],
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDcaFilterChip({
+    required String label,
+    IconData? icon,
+    Color? iconColor,
+    required bool isSelected,
+    required VoidCallback onTap,
+  }) {
+    return Expanded(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: isSelected ? AppColors.accent.withValues(alpha: 0.15) : AppColors.surface,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: isSelected ? AppColors.accent : AppColors.border,
+              width: isSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 13, color: iconColor ?? AppColors.textSecondary),
+                const SizedBox(width: 4),
+              ],
+              Flexible(
                 child: Text(
-                  'МОНЕТИ В НАКОПИЧЕННІ (${groupedCoins.length})',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.8,
+                  label,
+                  style: TextStyle(
+                    color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                    fontSize: 11,
+                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              const SizedBox(width: 8),
-              const Text(
-                'Натисніть для траншів',
-                style: TextStyle(color: AppColors.accentLight, fontSize: 11, fontWeight: FontWeight.w600),
-              ),
             ],
           ),
-          const SizedBox(height: 8),
+        ),
+      ),
+    );
+  }
 
-          // 3. СПИСОК ГРУПОВАНИХ МОНЕТ З РОЗГОРТАННЯМ ТРАНШІВ
-          if (groupedCoins.isEmpty)
-            _buildEmptyState(
-              'Немає активних покупок. Натисніть "З Binance (FIFO)" для автоматичного завантаження угод з біржі або "+ Вручну" щоб додати купівлю.',
-            )
-          else
-            ...groupedCoins.map((coin) => _DcaCoinExpandableCard(
-                  coin: coin,
-                  notifier: notifier,
-                )),
+  Widget _buildDcaSectionHeader({
+    required String title,
+    required int count,
+    required String subtitle,
+    Color? accentColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          Container(
+            width: 3.5,
+            height: 24,
+            decoration: BoxDecoration(
+              color: accentColor ?? AppColors.accent,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '$title ($count)',
+                  style: const TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 0.5,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  subtitle,
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );
   }
 
   // ==========================================
-  // 5. ВКЛАДКА: AI-АУДИТ (LLAMA 3.3 70B НА GROQ)
+  // 5. ВКЛАДКА: AI-АУДИТ (LLAMA 3.3 70B & QUANT ENGINE)
   // ==========================================
   Widget _buildAiAuditTab(CryptoPortfolioState state, CryptoPortfolioNotifier notifier) {
     final report = state.auditReport;
+    final isPositiveTotal = (report?.totalPnlUsd ?? 0) >= 0;
+    final totalPnlColor = isPositiveTotal ? AppColors.greenTask : AppColors.redTask;
 
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // Верхній банер аудиту
-        Container(
-          padding: const EdgeInsets.all(20),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                AppColors.accent.withOpacity(0.2),
-                AppColors.surface,
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-            ),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: AppColors.accent.withOpacity(0.3)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Row(
-                children: [
-                  Icon(Icons.auto_awesome_rounded, color: AppColors.accentLight, size: 24),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'AI-Аудит Портфелю (Llama 3.3 70B)',
-                      style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 17),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              const Text(
-                'Професійний фінансовий аналіз концентрації активів, достатності кеш-подушки та сітки фіксації прибутку без використання домашнього ПК.',
-                style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
-              ),
-              const SizedBox(height: 16),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accent,
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  ),
-                  icon: state.isAuditing
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                        )
-                      : const Icon(Icons.psychology_rounded, color: Colors.white),
-                  label: Text(
-                    state.isAuditing ? 'Аналізуємо портфель...' : 'Запустити аудит портфелю',
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                  ),
-                  onPressed: state.isAuditing ? null : () => notifier.runAiAudit(),
-                ),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-
-        if (report != null) ...[
-          // Оцінка здоров'я та Диверсифікація
-          Row(
-            children: [
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text('Оцінка здоров\'я', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      Text(
-                        '${report.overallHealthScore}/100',
-                        style: TextStyle(
-                          color: _getHealthScoreColor(report.overallHealthScore),
-                          fontWeight: FontWeight.bold,
-                          fontSize: 26,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: AppColors.border),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text('Диверсифікація', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                      const SizedBox(height: 8),
-                      Text(
-                        report.diversificationStatus,
-                        style: const TextStyle(
-                          color: AppColors.blueTask,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 18,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Стратегічний висновок
+    return RefreshIndicator(
+      color: AppColors.accent,
+      backgroundColor: AppColors.surface,
+      onRefresh: () => notifier.runAiAudit(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // 1. Верхній банер запуску AI-Аудиту
           Container(
-            padding: const EdgeInsets.all(16),
+            padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.accent.withValues(alpha: 0.2),
+                  AppColors.surface,
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
-                    Icon(Icons.lightbulb_outline_rounded, color: AppColors.warning, size: 18),
-                    SizedBox(width: 6),
-                    Text('СТРАТЕГІЧНИЙ ВИСНОВОК ТРЕЙДЕРА:', style: TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.bold)),
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.auto_awesome_rounded, color: AppColors.accentLight, size: 22),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'AI-Аудит & Квант-Ризик Портфеля',
+                            style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'Llama 3.3 70B · Аналіз закупок DCA · 3 Шари TP · ATR Stop-Loss',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  report.strategicSummary,
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 14, height: 1.4),
+                const SizedBox(height: 10),
+                const Text(
+                  'Глибока перевірка кожної позиції: порівнює вашу реальну ціну закупки (FIFO/DCA) з поточним ринком, оцінює перекіс капіталу, достатність кеш-подушки та розраховує точні рівні фіксації прибутку (TP1/TP2/TP3), добору на дні та захисного стопу.',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.35),
                 ),
-                if (report.cashReserveComment.isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  Text(
-                    'Кеш-подушка: ${report.cashReserveComment}',
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                const SizedBox(height: 14),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      elevation: 0,
+                    ),
+                    icon: state.isAuditing
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                          )
+                        : const Icon(Icons.psychology_rounded, color: Colors.white, size: 20),
+                    label: Text(
+                      state.isAuditing
+                          ? 'Аналізуємо структуру та індикатори...'
+                          : (report == null ? 'Запустити повний аудит портфеля' : 'Оновити AI-аудит портфеля'),
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    onPressed: state.isAuditing ? null : () => notifier.runAiAudit(),
                   ),
-                ],
+                ),
               ],
             ),
           ),
           const SizedBox(height: 16),
 
-          // Поради по кожній монеті
-          const Text(
-            'РЕКОМЕНДАЦІЇ ЩОДО АКТИВІВ:',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.8),
-          ),
-          const SizedBox(height: 8),
-          ...report.assetRecommendations.map((item) {
-            return Container(
-              margin: const EdgeInsets.symmetric(vertical: 4),
-              padding: const EdgeInsets.all(14),
+          if (report != null) ...[
+            // 2. Картки: Оцінка здоров'я + Диверсифікація
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ІНДЕКС ЗДОРОВ\'Я',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                '${report.overallHealthScore}',
+                                style: TextStyle(
+                                  color: _getHealthScoreColor(report.overallHealthScore),
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 26,
+                                ),
+                              ),
+                            ),
+                            const Text(
+                              '/100',
+                              style: TextStyle(color: AppColors.textDisabled, fontSize: 13, fontWeight: FontWeight.w600),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(4),
+                          child: LinearProgressIndicator(
+                            value: (report.overallHealthScore / 100.0).clamp(0.0, 1.0),
+                            minHeight: 5,
+                            backgroundColor: AppColors.surfaceVariant,
+                            valueColor: AlwaysStoppedAnimation<Color>(_getHealthScoreColor(report.overallHealthScore)),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: AppColors.surface,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: AppColors.border),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ДИВЕРСИФІКАЦІЯ',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.5),
+                        ),
+                        const SizedBox(height: 6),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            report.diversificationStatus,
+                            style: TextStyle(
+                              color: report.diversificationStatus.contains('ПЕРЕКІС') || report.diversificationStatus.contains('КОНЦЕНТРАЦІЯ')
+                                  ? AppColors.warning
+                                  : AppColors.blueTask,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 18,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'Топ-актив: ${report.topAssetSymbol} (${report.topAssetSharePct.toStringAsFixed(1)}%)',
+                            style: const TextStyle(color: AppColors.textDisabled, fontSize: 11),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            // 3. Матриця Алокації Капіталу та Загальний PnL
+            if (report.totalValueUsd > 0) ...[
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: AppColors.border),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.pie_chart_rounded, size: 16, color: AppColors.accentLight),
+                        const SizedBox(width: 6),
+                        const Expanded(
+                          child: Text(
+                            'СТРУКТУРА КАПІТАЛУ ТА СУМАРНИЙ PNL',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.6,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                          decoration: BoxDecoration(
+                            color: totalPnlColor.withValues(alpha: 0.14),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            '${isPositiveTotal ? '+' : ''}${report.totalPnlPct.toStringAsFixed(2)}% (${isPositiveTotal ? '+' : '-'}\$${report.totalPnlUsd.abs().toStringAsFixed(2)})',
+                            style: TextStyle(color: totalPnlColor, fontSize: 10.5, fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Баланс vs Вкладено
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Поточний капітал', style: TextStyle(color: AppColors.textDisabled, fontSize: 10)),
+                              const SizedBox(height: 2),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '\$${_formatPrice(report.totalValueUsd)}',
+                                  style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              const Text('Вкладено (Закупка)', style: TextStyle(color: AppColors.textDisabled, fontSize: 10)),
+                              const SizedBox(height: 2),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  '\$${_formatPrice(report.totalInvestedUsd)}',
+                                  style: const TextStyle(color: AppColors.textSecondary, fontWeight: FontWeight.bold, fontSize: 15),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Візуальний прогрес-бар алокації (Кеш / BTC+ETH / Альти)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(6),
+                      child: SizedBox(
+                        height: 8,
+                        child: Row(
+                          children: [
+                            if (report.cashPct > 0)
+                              Expanded(
+                                flex: (report.cashPct * 10).round().clamp(1, 1000),
+                                child: Container(color: AppColors.greenTask),
+                              ),
+                            if (report.corePct > 0)
+                              Expanded(
+                                flex: (report.corePct * 10).round().clamp(1, 1000),
+                                child: Container(color: AppColors.blueTask),
+                              ),
+                            if (report.altPct > 0)
+                              Expanded(
+                                flex: (report.altPct * 10).round().clamp(1, 1000),
+                                child: Container(color: AppColors.accentLight),
+                              ),
+                            if (report.cashPct <= 0 && report.corePct <= 0 && report.altPct <= 0)
+                              Expanded(child: Container(color: AppColors.surfaceVariant)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+
+                    // 3 колонки алокації
+                    Row(
+                      children: [
+                        _buildAuditAllocTile(
+                          dotColor: AppColors.greenTask,
+                          title: 'Кеш (Стейбли)',
+                          pct: '${report.cashPct.toStringAsFixed(1)}%',
+                          usd: '\$${report.cashUsd.toStringAsFixed(0)}',
+                        ),
+                        const SizedBox(width: 6),
+                        _buildAuditAllocTile(
+                          dotColor: AppColors.blueTask,
+                          title: 'Ядро BTC/ETH',
+                          pct: '${report.corePct.toStringAsFixed(1)}%',
+                          usd: '\$${report.coreUsd.toStringAsFixed(0)}',
+                        ),
+                        const SizedBox(width: 6),
+                        _buildAuditAllocTile(
+                          dotColor: AppColors.accentLight,
+                          title: 'Альткоїни',
+                          pct: '${report.altPct.toStringAsFixed(1)}%',
+                          usd: '\$${report.altUsd.toStringAsFixed(0)}',
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // 4. Стратегічний висновок, Кеш-подушка та Пріоритетні Дії
+            Container(
+              padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
                 color: AppColors.surface,
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 border: Border.all(color: AppColors.border),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Expanded(
-                        child: Row(
-                          children: [
-                            Flexible(
-                              child: Text(
-                                item.symbol,
-                                style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            _buildActionBadge(item.action),
-                          ],
+                      const Icon(Icons.lightbulb_outline_rounded, color: AppColors.warning, size: 18),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text(
+                          'СТРАТЕГІЧНИЙ ВЕРДИКТ КЕРУЮЧОГО',
+                          style: TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.6),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const SizedBox(width: 8),
-                      _buildRiskBadge(item.riskLevel),
+                      Text(
+                        DateFormat('HH:mm').format(report.auditedAt),
+                        style: const TextStyle(color: AppColors.textDisabled, fontSize: 10),
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 6),
+                  if (report.marketRegime.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.currency_bitcoin_rounded, size: 14, color: Color(0xFFF3BA2F)),
+                          const SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              report.marketRegime,
+                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 11, fontWeight: FontWeight.w600),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
                   Text(
-                    item.reason,
-                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 13, height: 1.3),
+                    report.strategicSummary,
+                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 13, height: 1.4),
                   ),
+
+                  if (report.riskSummary.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceVariant.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.shield_outlined, size: 15, color: AppColors.blueTask),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              report.riskSummary,
+                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 11.5, height: 1.35),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  if (report.cashReserveComment.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.greenTask.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.25)),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Icon(Icons.account_balance_wallet_outlined, size: 15, color: AppColors.greenTask),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              report.cashReserveComment,
+                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 11.5, height: 1.35),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
+                  if (report.priorityActions.isNotEmpty) ...[
+                    const SizedBox(height: 12),
+                    const Text(
+                      'ПЛАН ПЕРШОЧЕРГОВИХ ДІЙ:',
+                      style: TextStyle(color: AppColors.accentLight, fontSize: 10.5, fontWeight: FontWeight.bold, letterSpacing: 0.6),
+                    ),
+                    const SizedBox(height: 6),
+                    ...report.priorityActions.map((act) => Padding(
+                          padding: const EdgeInsets.only(bottom: 5),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Padding(
+                                padding: EdgeInsets.only(top: 2),
+                                child: Icon(Icons.check_circle_outline_rounded, size: 14, color: AppColors.accentLight),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Text(
+                                  act,
+                                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, height: 1.35),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )),
+                  ],
                 ],
               ),
-            );
-          }),
-        ] else ...[
-          _buildEmptyState('Натисніть кнопку вище, щоб штучний інтелект проаналізував ваш портфель.'),
+            ),
+            const SizedBox(height: 16),
+
+            // 5. Детальний розбір кожної позиції портфеля
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'ПОЗИЦІЙНИЙ АУДИТ АКТИВІВ (${report.assetRecommendations.length})',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.8),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const Text(
+                  'Натисніть для плану TP/SL',
+                  style: TextStyle(color: AppColors.textDisabled, fontSize: 10.5),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            ...report.assetRecommendations.map((item) => _buildAuditAssetCard(item)),
+          ] else ...[
+            _buildEmptyState(
+              'Натисніть кнопку «Запустити повний аудит портфеля» вище, щоб проаналізувати ваші точки входу, PnL, концентрацію капіталу та отримати точні цілі фіксації прибутку.',
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 
-  Widget _buildActionBadge(String action) {
+  Widget _buildAuditAllocTile({
+    required Color dotColor,
+    required String title,
+    required String pct,
+    required String usd,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 6),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant.withValues(alpha: 0.6),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 7,
+                  height: 7,
+                  decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      title,
+                      style: const TextStyle(color: AppColors.textDisabled, fontSize: 9),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 3),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                '$pct · $usd',
+                style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 11),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildAuditAssetCard(GroqAuditItem item) {
+    final isPos = item.pnlUsd >= 0;
+    final pnlColor = isPos ? AppColors.greenTask : AppColors.redTask;
+    final isStable = item.symbol == 'USDT' || item.symbol == 'USDC' || item.symbol == 'FDUSD' || item.symbol == 'DAI';
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // 1. Шапка монети: Аватар, Символ, Частка в портфелі, Бейдж Дії та Ризику
+          Row(
+            children: [
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                child: Text(
+                  item.symbol.length > 3 ? item.symbol.substring(0, 3) : item.symbol,
+                  style: const TextStyle(color: AppColors.accentLight, fontWeight: FontWeight.bold, fontSize: 11),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            item.symbol,
+                            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        if (item.totalUsd > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                            decoration: BoxDecoration(
+                              color: AppColors.surfaceVariant,
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '${item.sharePct.toStringAsFixed(1)}% · \$${item.totalUsd.toStringAsFixed(0)}',
+                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 9.5, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    _buildActionBadge(item.action, customLabel: item.actionLabelUk),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  _buildRiskBadge(item.riskLevel),
+                  if (!isStable && item.totalUsd > 0) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: pnlColor.withValues(alpha: 0.14),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        '${isPos ? '+' : ''}${item.pnlPct.toStringAsFixed(1)}% (${isPos ? '+' : '-'}\$${item.pnlUsd.abs().toStringAsFixed(1)})',
+                        style: TextStyle(color: pnlColor, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+
+          if (!isStable && item.currentPrice > 0) ...[
+            const SizedBox(height: 10),
+
+            // 2. Панель порівняння: Ціна Закупки vs Поточна Ціна + 4 Квантові метрики
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant.withValues(alpha: 0.45),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('ЦІНА ЗАКУПКИ (DCA)', style: TextStyle(color: AppColors.textDisabled, fontSize: 9, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '\$${_formatPrice(item.avgEntryPrice)}',
+                            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    child: Icon(Icons.arrow_forward_rounded, size: 14, color: AppColors.textDisabled.withValues(alpha: 0.6)),
+                  ),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('ПОТОЧНА ЦІНА', style: TextStyle(color: AppColors.textDisabled, fontSize: 9, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            '\$${_formatPrice(item.currentPrice)}',
+                            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13.5),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        const Text('RSI (14D) · R:R', style: TextStyle(color: AppColors.textDisabled, fontSize: 9, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 2),
+                        FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Text(
+                            '${item.rsi.toStringAsFixed(1)} · 1:${item.riskRewardRatio.toStringAsFixed(1)}',
+                            style: TextStyle(
+                              color: item.rsi <= 40
+                                  ? AppColors.greenTask
+                                  : (item.rsi >= 68 ? AppColors.warning : AppColors.accentLight),
+                              fontWeight: FontWeight.bold,
+                              fontSize: 12.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+
+            // 3. Торговий коридор монети: Добір DCA + Стоп-Лос + 3 Шари Тейків
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.blueTask.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: AppColors.blueTask.withValues(alpha: 0.25)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Text('Добір DCA: ', style: TextStyle(color: AppColors.blueTask, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '\$${_formatPrice(item.dcaBuyPrice)}',
+                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                    decoration: BoxDecoration(
+                      color: AppColors.redTask.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: AppColors.redTask.withValues(alpha: 0.25)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Text('Стоп SL: ', style: TextStyle(color: AppColors.redTask, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              '\$${_formatPrice(item.stopLossPrice)}',
+                              style: const TextStyle(color: AppColors.redTask, fontSize: 11, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: AppColors.greenTask.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.25)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.flag_outlined, size: 13, color: AppColors.greenTask),
+                  const SizedBox(width: 5),
+                  const Text('Тейки: ', style: TextStyle(color: AppColors.greenTask, fontSize: 9.5, fontWeight: FontWeight.bold)),
+                  Expanded(
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        'TP1 (30%): \$${_formatPrice(item.tp1Price)}  ·  TP2 (35%): \$${_formatPrice(item.tp2Price)}  ·  TP3: \$${_formatPrice(item.tp3Price)}',
+                        style: const TextStyle(color: AppColors.greenTask, fontSize: 10.5, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
+          const SizedBox(height: 10),
+          // 4. Аналітичне обґрунтування
+          Text(
+            item.reason,
+            style: const TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.35),
+          ),
+
+          // 5. Конкретний торговий план виконання
+          if (item.executionPlan.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppColors.accent.withValues(alpha: 0.25)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(Icons.playlist_add_check_rounded, size: 14, color: AppColors.accentLight),
+                      SizedBox(width: 5),
+                      Expanded(
+                        child: Text(
+                          'ТОРГОВИЙ ПЛАН ВИКОНАННЯ:',
+                          style: TextStyle(color: AppColors.accentLight, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 0.4),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    item.executionPlan,
+                    style: const TextStyle(color: AppColors.textPrimary, fontSize: 11.5, height: 1.35),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildActionBadge(String action, {String customLabel = ''}) {
     Color color;
+    String defaultLabel;
     switch (action.toUpperCase()) {
       case 'TAKE_PROFIT':
         color = AppColors.greenTask;
+        defaultLabel = 'ФІКСУВАТИ ЧАСТИНУ TP';
         break;
       case 'ACCUMULATE':
         color = AppColors.blueTask;
+        defaultLabel = 'ДОБИРАТИ НА СПАДІ (DCA)';
         break;
       case 'REDUCE':
         color = AppColors.redTask;
+        defaultLabel = 'СКОРОТИТИ КОНЦЕНТРАЦІЮ';
+        break;
+      case 'STOP_WATCH':
+        color = AppColors.redTask;
+        defaultLabel = 'КОНТРОЛЬ СТОПУ';
         break;
       default:
         color = AppColors.warning;
+        defaultLabel = 'УТРИМУВАТИ В СТРУКТУРІ';
     }
 
+    final displayLabel = customLabel.isNotEmpty ? customLabel : defaultLabel;
+
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.15),
+        color: color.withValues(alpha: 0.15),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        action,
-        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 11),
+        displayLabel,
+        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 10),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
       ),
     );
   }
 
   Widget _buildRiskBadge(String risk) {
-    Color color = risk == 'HIGH' ? AppColors.redTask : (risk == 'MEDIUM' ? AppColors.warning : AppColors.greenTask);
+    final r = risk.toUpperCase();
+    final Color color = r == 'HIGH'
+        ? AppColors.redTask
+        : (r == 'MEDIUM' ? AppColors.warning : AppColors.greenTask);
+    final String labelUk = r == 'HIGH'
+        ? 'Високий'
+        : (r == 'MEDIUM' ? 'Помірний' : 'Низький');
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.12),
+        color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Text(
-        'Ризик: $risk',
+        'Ризик: $labelUk',
         style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
       ),
     );
@@ -1201,10 +2033,35 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
       builder: (ctx) => DcaAddDialog(
         initialSymbol: opp.symbol,
         initialPrice: opp.currentPrice,
-        initialNotes: 'AI-Радар: Вхід \$${opp.entryZoneMin}-\$${opp.entryZoneMax}, TP1 \$${opp.targetPrice1}, TP2 \$${opp.targetPrice2}, SL \$${opp.stopLoss}. Стратегія: ${opp.dcaStrategy}',
+        initialNotes:
+            'AI-Радар [${opp.setupType}]: Вхід \$${_formatDialogPrice(opp.entryZoneMin)}-\$${_formatDialogPrice(opp.entryZoneMax)}, '
+            'TP1 \$${_formatDialogPrice(opp.targetPrice1)} (50% + Б/З), '
+            'TP2 \$${_formatDialogPrice(opp.targetPrice2)}, '
+            'SL \$${_formatDialogPrice(opp.stopLoss)} (закриття 4H/1D нижче рівня).',
         onAdd: (tx) => notifier.addDcaTransaction(tx),
       ),
     );
+  }
+
+  String _formatDialogPrice(double val) {
+    if (val >= 1000) return val.toStringAsFixed(2);
+    if (val >= 1) return val.toStringAsFixed(3);
+    if (val >= 0.01) return val.toStringAsFixed(4);
+    return val.toStringAsFixed(6);
+  }
+
+  String _formatPrice(double val) {
+    if (val >= 1000) {
+      return NumberFormat('#,##0.00', 'en_US').format(val);
+    } else if (val >= 1) {
+      return val.toStringAsFixed(2);
+    } else if (val >= 0.01) {
+      return val.toStringAsFixed(4);
+    } else if (val > 0) {
+      return val.toStringAsFixed(6);
+    } else {
+      return '0.00';
+    }
   }
 
   // ==========================================
@@ -1255,7 +2112,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'AI-Радар Монет (350+ Spot пар)',
+                            'Smart Money AI-Радар (350+ пар)',
                             style: TextStyle(
                               color: AppColors.textPrimary,
                               fontWeight: FontWeight.bold,
@@ -1266,8 +2123,10 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                           ),
                           SizedBox(height: 2),
                           Text(
-                            'Пошук точок розвороту та накопичення',
+                            'Order Flow (Taker Buy) · R:R >= 1:3 · Точні TP1/TP2 та ATR Stop-Loss',
                             style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                           ),
                         ],
                       ),
@@ -1276,8 +2135,8 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  'Двоетапний сканер ринку: квантитативний аналіз просадок, RSI та ліквідності Binance + аналіз мульти-агентним інвестиційним AI-комітетом.',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.3),
+                  '5-ступеневий алго-скринер: відсікає «падаючі ножі», аналізує 90-денний потік ринкових покупок китів (Taker Buy Volume), бичачі дивергенції та розраховує структурні рівні Тейк-Профіту (Fibo 0.382/0.618) і захищеного Стоп-Лосу (Support - 1.2×ATR).',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.35),
                 ),
                 const SizedBox(height: 14),
                 if (isScanning) ...[
@@ -1329,7 +2188,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                       icon: const Icon(Icons.radar_rounded, size: 20),
                       label: Text(
                         (report == null || report.opportunities.isEmpty)
-                            ? 'Запустити AI-Радар ринку'
+                            ? 'Запустити Smart Money AI-Радар'
                             : 'Пересканувати ринок (350+ монет)',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
@@ -1356,26 +2215,54 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Row(
+                      const Icon(Icons.groups_rounded, color: AppColors.blueTask, size: 18),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text(
+                          'ВИСНОВОК АЛГО-КОМІТЕТУ',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.8,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      _buildMarketRegimeBadge(report.marketRegime),
+                    ],
+                  ),
+                  if (report.btcTrend.isNotEmpty && report.btcTrend != '—') ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
                         children: [
-                          Icon(Icons.groups_rounded, color: AppColors.blueTask, size: 18),
-                          SizedBox(width: 6),
-                          Text(
-                            'ВИСНОВОК AI-КОМІТЕТУ',
-                            style: TextStyle(
-                              color: AppColors.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 0.8,
+                          const Icon(Icons.currency_bitcoin_rounded, size: 14, color: Color(0xFFF3BA2F)),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: Text(
+                              'Контекст BTC: ${report.btcTrend}',
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
                       ),
-                      _buildMarketRegimeBadge(report.marketRegime),
-                    ],
-                  ),
+                    ),
+                  ],
                   const SizedBox(height: 10),
                   Text(
                     report.macroSummary,
@@ -1397,19 +2284,23 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
 
             // Список можливостей
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'ТОП-ЗНАХІДКИ ДЛЯ DCA-НАБОРУ (${report.opportunities.length})',
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 0.8,
+                Expanded(
+                  child: Text(
+                    'ТОП-ЗНАХІДКИ ДЛЯ DCA-НАБОРУ (${report.opportunities.length})',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
+                const SizedBox(width: 8),
                 Text(
-                  '${report.totalCoinsScanned} пар перевірено',
+                  '${report.totalCoinsScanned} пар',
                   style: const TextStyle(color: AppColors.textDisabled, fontSize: 11),
                 ),
               ],
@@ -1491,6 +2382,9 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
     final isPositive = coin.pnlUsd >= 0;
     final pnlColor = isPositive ? AppColors.greenTask : AppColors.redTask;
 
+    final hasBinance = coin.tranches.any((t) => t.walletType == 'Binance Spot' || t.walletType == 'BINANCE');
+    final hasManual = coin.tranches.any((t) => t.walletType != 'Binance Spot' && t.walletType != 'BINANCE');
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
@@ -1502,32 +2396,33 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
       ),
       child: Column(
         children: [
-          // Головний рядок монети
+          // Головний інтерактивний блок монети
           InkWell(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             borderRadius: BorderRadius.circular(16),
             child: Padding(
               padding: const EdgeInsets.all(14),
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  CircleAvatar(
-                    radius: 20,
-                    backgroundColor: AppColors.accent.withValues(alpha: 0.15),
-                    child: Text(
-                      coin.symbol.length > 3 ? coin.symbol.substring(0, 3) : coin.symbol,
-                      style: const TextStyle(
-                        color: AppColors.accentLight,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 12,
+                  // Рядок 1: Аватар, Символ, Бейдж джерела та Кількість угод
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 18,
+                        backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                        child: Text(
+                          coin.symbol.length > 3 ? coin.symbol.substring(0, 3) : coin.symbol,
+                          style: const TextStyle(
+                            color: AppColors.accentLight,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Row(
                           children: [
                             Flexible(
                               child: Text(
@@ -1541,53 +2436,199 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
+                            const SizedBox(width: 8),
+                            // Бейдж джерела
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: (hasBinance && !hasManual)
+                                    ? const Color(0xFFF3BA2F).withValues(alpha: 0.15)
+                                    : (!hasBinance && hasManual)
+                                        ? AppColors.surfaceVariant
+                                        : AppColors.accent.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                (hasBinance && !hasManual)
+                                    ? 'Binance'
+                                    : (!hasBinance && hasManual)
+                                        ? 'Ручна'
+                                        : 'Binance + Ручна',
+                                style: TextStyle(
+                                  color: (hasBinance && !hasManual)
+                                      ? const Color(0xFFF3BA2F)
+                                      : (!hasBinance && hasManual)
+                                          ? AppColors.textSecondary
+                                          : AppColors.accentLight,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
                             const SizedBox(width: 6),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                               decoration: BoxDecoration(
                                 color: AppColors.surfaceVariant,
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
                                 '${coin.tranches.length} ${coin.tranches.length == 1 ? 'покупка' : 'покупки'}',
-                                style: const TextStyle(color: AppColors.textSecondary, fontSize: 10, fontWeight: FontWeight.w600),
+                                style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5, fontWeight: FontWeight.w600),
                               ),
                             ),
                           ],
                         ),
-                        const SizedBox(height: 3),
-                        FittedBox(
-                          fit: BoxFit.scaleDown,
-                          alignment: Alignment.centerLeft,
-                          child: Text(
-                            '${_formatAmount(coin.totalAmount)} шт · Сер: \$${_formatPrice(coin.avgEntryPrice)}',
-                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                      ),
+                      const SizedBox(width: 6),
+                      Icon(
+                        _isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                        color: AppColors.textSecondary,
+                        size: 20,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+
+                  // Рядок 2: ПАНЕЛЬ ПОРІВНЯННЯ ЦІН (ЦІНА ЗАКУПКИ vs ПОТОЧНА ЦІНА)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: AppColors.surfaceVariant.withValues(alpha: 0.45),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
+                    ),
+                    child: Row(
+                      children: [
+                        // Колонка ліворуч: Ціна закупки (Вхід)
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Row(
+                                children: [
+                                  Icon(Icons.shopping_bag_outlined, size: 12, color: AppColors.accentLight),
+                                  SizedBox(width: 4),
+                                  Text(
+                                    'ЦІНА ЗАКУПКИ',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.4,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '\$${_formatPrice(coin.avgEntryPrice)}',
+                                  style: const TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Вкладено: \$${_formatPrice(coin.totalCost)}',
+                                style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              ),
+                            ],
+                          ),
+                        ),
+
+                        // Центральний роздільник зі стрілкою
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Icon(
+                            Icons.arrow_forward_rounded,
+                            size: 16,
+                            color: AppColors.textDisabled.withValues(alpha: 0.6),
+                          ),
+                        ),
+
+                        // Колонка праворуч: Поточна ціна (Зараз на ринку)
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.end,
+                                children: [
+                                  const Text(
+                                    'ПОТОЧНА ЦІНА',
+                                    style: TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.4,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Icon(
+                                    isPositive ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                                    size: 12,
+                                    color: pnlColor,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 3),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  '\$${_formatPrice(coin.currentPrice)}',
+                                  style: const TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'Вартість: \$${_formatPrice(coin.totalValueUsd)}',
+                                style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                  const SizedBox(height: 10),
+
+                  // Рядок 3: Кількість монет та Загальний PnL результат
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text(
-                        '\$${_formatPrice(coin.currentPrice)}',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
+                      Flexible(
+                        child: Text(
+                          'Кількість: ${_formatAmount(coin.totalAmount)} ${coin.symbol}',
+                          style: const TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      const SizedBox(height: 3),
+                      const SizedBox(width: 8),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                         decoration: BoxDecoration(
                           color: pnlColor.withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: pnlColor.withValues(alpha: 0.3)),
                         ),
                         child: Text(
-                          '${isPositive ? '+' : ''}${coin.pnlPct.toStringAsFixed(2)}%',
+                          '${isPositive ? '+' : ''}${coin.pnlPct.toStringAsFixed(2)}% (${isPositive ? '+' : '-'}\$${coin.pnlUsd.abs().toStringAsFixed(2)})',
                           style: TextStyle(
                             color: pnlColor,
                             fontWeight: FontWeight.bold,
@@ -1596,12 +2637,6 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(width: 4),
-                  Icon(
-                    _isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                    color: AppColors.textSecondary,
-                    size: 20,
                   ),
                 ],
               ),
@@ -1653,31 +2688,31 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
   Widget _buildTrancheRow(DcaTrancheItem t) {
     final isPos = t.pnlPct >= 0;
     final color = isPos ? AppColors.greenTask : AppColors.redTask;
-    final isBinance = t.walletType == 'Binance Spot';
+    final isBinance = t.walletType == 'Binance Spot' || t.walletType == 'BINANCE';
     final isConvert = t.notes.contains('Convert');
+    final isFallback = t.id.startsWith('binance_balance_');
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Ліва колонка: Дата + бейдж джерела та Кількість монет і Ціна
+          // Ліва колонка: Джерело, дата, кількість, ціна закупки
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Row(
-                  mainAxisSize: MainAxisSize.min,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
                         color: isBinance
                             ? (isConvert
@@ -1687,7 +2722,9 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        isBinance ? (isConvert ? 'Convert' : 'Binance') : 'Ручна',
+                        isBinance
+                            ? (isConvert ? 'Convert' : (isFallback ? 'Актив гаманця' : 'Binance Spot'))
+                            : 'Ручна DCA',
                         style: TextStyle(
                           color: isBinance
                               ? (isConvert ? AppColors.accentLight : const Color(0xFFF3BA2F))
@@ -1697,7 +2734,7 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                         ),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Flexible(
                       child: Text(
                         _formatDate(t.date),
@@ -1708,7 +2745,7 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 Row(
                   children: [
                     Text(
@@ -1719,25 +2756,34 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                         fontSize: 13,
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 8),
                     Flexible(
-                      child: Text(
-                        'по \$${_formatPrice(t.buyPrice)}',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 11,
-                          fontWeight: FontWeight.w500,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceVariant,
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        child: Text(
+                          'Ціна закупки: \$${_formatPrice(t.buyPrice)}',
+                          style: const TextStyle(
+                            color: AppColors.accentLight,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 1),
+                const SizedBox(height: 3),
                 Text(
-                  'Разом: \$${((t.amount * t.buyPrice) + t.fee).toStringAsFixed(2)}',
-                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 10),
+                  'Разом закупка: \$${((t.amount * t.buyPrice) + t.fee).toStringAsFixed(2)} · Зараз ринок: \$${_formatPrice(t.currentPrice)}',
+                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ],
             ),
@@ -1750,7 +2796,7 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
                 decoration: BoxDecoration(
                   color: color.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(6),
@@ -1764,7 +2810,7 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                   ),
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Text(
                 '${isPos ? '+' : '-'}\$${t.pnlUsd.abs().toStringAsFixed(2)}',
                 style: TextStyle(
@@ -1836,24 +2882,35 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
         ? AppColors.greenTask
         : (opp.confidenceScore >= 60 ? AppColors.blueTask : AppColors.warning);
 
+    final tp1Pct = opp.currentPrice > 0
+        ? ((opp.targetPrice1 - opp.currentPrice) / opp.currentPrice) * 100.0
+        : 25.0;
+    final tp2Pct = opp.currentPrice > 0
+        ? ((opp.targetPrice2 - opp.currentPrice) / opp.currentPrice) * 100.0
+        : 55.0;
+    final slPct = opp.currentPrice > 0
+        ? ((opp.currentPrice - opp.stopLoss) / opp.currentPrice) * 100.0
+        : 10.0;
+
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: _isExpanded ? AppColors.accent.withValues(alpha: 0.4) : AppColors.border,
+          color: _isExpanded ? AppColors.accent.withValues(alpha: 0.5) : AppColors.border,
         ),
       ),
       child: Column(
         children: [
-          // Шапка картки: назва монети, поточна ціна, впевненість
+          // Шапка картки: назва монети, сетап, поточна ціна, індекс Quant Score
           InkWell(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             borderRadius: BorderRadius.circular(16),
             child: Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
@@ -1895,19 +2952,31 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                                     color: AppColors.surfaceVariant,
                                     borderRadius: BorderRadius.circular(4),
                                   ),
-                                  child: const Text(
-                                    'USDT',
-                                    style: TextStyle(color: AppColors.textDisabled, fontSize: 9, fontWeight: FontWeight.bold),
+                                  child: Text(
+                                    opp.sector.isNotEmpty ? opp.sector : 'Spot',
+                                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 9, fontWeight: FontWeight.bold),
                                   ),
                                 ),
                               ],
                             ),
-                            const SizedBox(height: 2),
-                            Text(
-                              opp.sector.isNotEmpty ? opp.sector : 'Spot',
-                              style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                            const SizedBox(height: 3),
+                            // Бейдж архетипу сетапу (Order Flow / Дивергенція / Пружина Вайкоффа)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.accent.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Text(
+                                opp.setupType,
+                                style: const TextStyle(
+                                  color: AppColors.accentLight,
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
                           ],
                         ),
@@ -1928,7 +2997,7 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 2),
+                          const SizedBox(height: 3),
                           Container(
                             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
@@ -1936,7 +3005,7 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              'AI: ${opp.confidenceScore}/100',
+                              'Alpha: ${opp.confidenceScore}/100',
                               style: TextStyle(
                                 color: confidenceColor,
                                 fontWeight: FontWeight.bold,
@@ -1950,97 +3019,31 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                   ),
                   const SizedBox(height: 10),
 
-                  // Рядок метрик: Просадка, RSI, Об'єм
+                  // 4-колонковий рядок квантових метрик: Дисконт, RSI, Taker Buy, R:R
                   Row(
                     children: [
-                      // Просадка від піку 60д
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceVariant,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Просадка 60д', style: TextStyle(color: AppColors.textDisabled, fontSize: 9)),
-                              const SizedBox(height: 2),
-                              FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  '-${opp.dropFromPeakPct.toStringAsFixed(1)}%',
-                                  style: const TextStyle(
-                                    color: AppColors.redTask,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      _buildMetricTile(
+                        label: 'Дисконт 90D',
+                        value: '-${opp.dropFromPeakPct.toStringAsFixed(1)}%',
+                        valueColor: AppColors.redTask,
                       ),
-                      const SizedBox(width: 6),
-                      // RSI 14
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceVariant,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('RSI (14D)', style: TextStyle(color: AppColors.textDisabled, fontSize: 9)),
-                              const SizedBox(height: 2),
-                              FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  opp.rsi.toStringAsFixed(1),
-                                  style: TextStyle(
-                                    color: opp.rsi <= 35 ? AppColors.greenTask : AppColors.textPrimary,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      const SizedBox(width: 4),
+                      _buildMetricTile(
+                        label: 'RSI (14D)',
+                        value: opp.rsi.toStringAsFixed(1),
+                        valueColor: opp.rsi <= 42 ? AppColors.greenTask : AppColors.textPrimary,
                       ),
-                      const SizedBox(width: 6),
-                      // Ризик-профіль
-                      Expanded(
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                          decoration: BoxDecoration(
-                            color: AppColors.surfaceVariant,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              const Text('Ризик / R:R', style: TextStyle(color: AppColors.textDisabled, fontSize: 9)),
-                              const SizedBox(height: 2),
-                              FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Text(
-                                  opp.riskRewardRatio > 0 ? '1:${opp.riskRewardRatio.toStringAsFixed(1)}' : opp.riskLevel,
-                                  style: const TextStyle(
-                                    color: AppColors.accentLight,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 12,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+                      const SizedBox(width: 4),
+                      _buildMetricTile(
+                        label: 'Викуп (Taker)',
+                        value: '${opp.takerBuyRatioPct.toStringAsFixed(1)}%',
+                        valueColor: opp.takerBuyRatioPct >= 51.5 ? AppColors.greenTask : AppColors.textPrimary,
+                      ),
+                      const SizedBox(width: 4),
+                      _buildMetricTile(
+                        label: 'R:R Профіт',
+                        value: opp.riskRewardRatio > 0 ? '1:${opp.riskRewardRatio.toStringAsFixed(1)}' : opp.riskLevel,
+                        valueColor: AppColors.accentLight,
                       ),
                     ],
                   ),
@@ -2052,76 +3055,165 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
           // Роздільник
           const Divider(height: 1, color: AppColors.border),
 
-          // Цілі та дія
+          // Математичні рівні Входу, TP1, TP2, Stop-Loss та Панель дій
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          const Text('Вхід: ', style: TextStyle(color: AppColors.textDisabled, fontSize: 11)),
-                          Flexible(
-                            child: Text(
-                              '\$${_formatPrice(opp.entryZoneMin)} - \$${_formatPrice(opp.entryZoneMax)}',
-                              style: const TextStyle(color: AppColors.textPrimary, fontSize: 11, fontWeight: FontWeight.w600),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                // 1. Рядок: Зона входу DCA та Захисний Стоп-Лос
+                Row(
+                  children: [
+                    // Зона DCA
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: AppColors.surfaceVariant.withValues(alpha: 0.6),
+                          borderRadius: BorderRadius.circular(7),
+                          border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Text('DCA: ', style: TextStyle(color: AppColors.textDisabled, fontSize: 10)),
+                            Expanded(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '\$${_formatPrice(opp.entryZoneMin)} – \$${_formatPrice(opp.entryZoneMax)}',
+                                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          const Text('Цілі: ', style: TextStyle(color: AppColors.textDisabled, fontSize: 11)),
-                          Flexible(
-                            child: Text(
-                              'TP1 \$${_formatPrice(opp.targetPrice1)} · TP2 \$${_formatPrice(opp.targetPrice2)}',
-                              style: const TextStyle(color: AppColors.greenTask, fontSize: 11, fontWeight: FontWeight.bold),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(width: 6),
+                    // Стоп-лос
+                    Expanded(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: AppColors.redTask.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(7),
+                          border: Border.all(color: AppColors.redTask.withValues(alpha: 0.25)),
+                        ),
+                        child: Row(
+                          children: [
+                            const Text('SL: ', style: TextStyle(color: AppColors.redTask, fontSize: 10, fontWeight: FontWeight.bold)),
+                            Expanded(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  '\$${_formatPrice(opp.stopLoss)} (-${slPct.toStringAsFixed(1)}%)',
+                                  style: const TextStyle(color: AppColors.redTask, fontSize: 11, fontWeight: FontWeight.bold),
+                                ),
+                              ),
                             ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+
+                // 2. Рядок: Тейк-профіти TP1 та TP2
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: AppColors.greenTask.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(7),
+                    border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.25)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.flag_outlined, size: 13, color: AppColors.greenTask),
+                      const SizedBox(width: 5),
+                      const Text('Тейки: ', style: TextStyle(color: AppColors.greenTask, fontSize: 10, fontWeight: FontWeight.bold)),
+                      Expanded(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            'TP1 \$${_formatPrice(opp.targetPrice1)} (+${tp1Pct.toStringAsFixed(0)}%)   ·   TP2 \$${_formatPrice(opp.targetPrice2)} (+${tp2Pct.toStringAsFixed(0)}%)',
+                            style: const TextStyle(color: AppColors.greenTask, fontSize: 11, fontWeight: FontWeight.bold),
                           ),
-                        ],
+                        ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.accent.withValues(alpha: 0.15),
-                    foregroundColor: AppColors.accentLight,
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                      side: const BorderSide(color: AppColors.accent),
+                const SizedBox(height: 10),
+
+                // 3. Рядок дій: Перемикач плану + Кнопка "В DCA"
+                Row(
+                  children: [
+                    // Кнопка розгортання/згортання
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => setState(() => _isExpanded = !_isExpanded),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
+                                color: AppColors.accentLight,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  _isExpanded ? 'Згорнути план' : 'Деталі плану & TP/SL',
+                                  style: const TextStyle(
+                                    color: AppColors.accentLight,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
-                    elevation: 0,
-                  ),
-                  icon: const Icon(Icons.add_shopping_cart_rounded, size: 15),
-                  label: const Text('В DCA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                  onPressed: widget.onAddToDca,
-                ),
-                const SizedBox(width: 4),
-                IconButton(
-                  icon: Icon(
-                    _isExpanded ? Icons.keyboard_arrow_up_rounded : Icons.keyboard_arrow_down_rounded,
-                    color: AppColors.textSecondary,
-                    size: 20,
-                  ),
-                  onPressed: () => setState(() => _isExpanded = !_isExpanded),
-                  tooltip: _isExpanded ? 'Згорнути аналіз' : 'Розгорнути AI-аналіз',
+                    const SizedBox(width: 8),
+
+                    // Кнопка додавання в DCA
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                        foregroundColor: AppColors.accentLight,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        minimumSize: const Size(0, 34),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9),
+                          side: const BorderSide(color: AppColors.accent),
+                        ),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(Icons.add_shopping_cart_rounded, size: 14),
+                      label: const Text(
+                        'В DCA',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: widget.onAddToDca,
+                    ),
+                  ],
                 ),
               ],
             ),
           ),
 
-          // Розгорнута секція multi-agent аналізу
+          // Розгорнута секція: Повний торговий план + Умови Тейк-Профіту та Стоп-Лосу
           if (_isExpanded) ...[
             Container(
               padding: const EdgeInsets.all(14),
@@ -2139,54 +3231,114 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                   _buildAnalysisBlock(
                     icon: Icons.trending_up_rounded,
                     iconColor: AppColors.blueTask,
-                    title: '1. ТЕХНІЧНИЙ СЕТАП (1D / 4H)',
+                    title: '1. ТЕХНІЧНА СТРУКТУРА ТА ІНДИКАТОРИ (90D)',
                     content: opp.technicalReason,
                   ),
                   const SizedBox(height: 10),
 
-                  // 2. Каталізатори та наратив
+                  // 2. Order Flow та Smart Money
                   _buildAnalysisBlock(
                     icon: Icons.bolt_rounded,
                     iconColor: AppColors.warning,
-                    title: '2. СМАРТ-МАНІ & НОВИННІ КАТАЛІЗАТОРИ',
+                    title: '2. ORDER FLOW (TAKER BUY) & ПОГЛИНАННЯ КИТІВ',
                     content: opp.smartMoneyCatalyst,
                   ),
                   const SizedBox(height: 10),
 
-                  // 3. DCA Архітектура
+                  // 3. DCA Архітектура входу
                   _buildAnalysisBlock(
                     icon: Icons.pie_chart_outline_rounded,
-                    iconColor: AppColors.greenTask,
-                    title: '3. РЕКОМЕНДОВАНА DCA-СТРАТЕГІЯ',
+                    iconColor: AppColors.accentLight,
+                    title: '3. АРХІТЕКТУРА ВХОДУ ТА ДОБОРУ ПОЗИЦІЇ',
                     content: opp.dcaStrategy,
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 12),
 
-                  // Stop Loss та Горизонт
-                  Row(
-                    children: [
-                      const Icon(Icons.shield_outlined, color: AppColors.redTask, size: 14),
-                      const SizedBox(width: 4),
-                      Flexible(
-                        child: Text(
-                          'Stop-Loss (інвалідація): \$${_formatPrice(opp.stopLoss)}',
-                          style: const TextStyle(color: AppColors.textSecondary, fontSize: 11),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Ризик: ${opp.riskLevel}',
-                        style: const TextStyle(color: AppColors.textDisabled, fontSize: 10),
-                      ),
-                    ],
+                  // 4. ПРОТОКОЛ ТЕЙК-ПРОФІТУ (КОЛИ ФІКСУВАТИ ПРИБУТОК)
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.greenTask.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.3)),
+                    ),
+                    child: _buildAnalysisBlock(
+                      icon: Icons.ads_click_rounded,
+                      iconColor: AppColors.greenTask,
+                      title: '4. КОЛИ РОБИТИ ТЕЙК-ПРОФІТ (TP1 / TP2 / ДОСТРОКОВО)',
+                      content: opp.tpTriggerRule.isNotEmpty
+                          ? opp.tpTriggerRule
+                          : 'На TP1 (\$${_formatPrice(opp.targetPrice1)}, +${tp1Pct.toStringAsFixed(1)}%) зафіксувати 50% позиції та перевести Stop-Loss у беззбиток. На TP2 (\$${_formatPrice(opp.targetPrice2)}, +${tp2Pct.toStringAsFixed(1)}%) закрити решту або увімкнути трейлінг по EMA 20.',
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 5. ПРОТОКОЛ СТОП-ЛОСУ (КОЛИ ВИХОДИТИ В МІНУС)
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.redTask.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.redTask.withValues(alpha: 0.3)),
+                    ),
+                    child: _buildAnalysisBlock(
+                      icon: Icons.shield_outlined,
+                      iconColor: AppColors.redTask,
+                      title: '5. КОЛИ РОБИТИ СТОП-ЛОС (ЗАХИСТ ВІД СВІПІВ)',
+                      content: opp.slTriggerRule.isNotEmpty
+                          ? opp.slTriggerRule
+                          : 'Стоп-рівень \$${_formatPrice(opp.stopLoss)} (-${slPct.toStringAsFixed(1)}%) розрахований за структурною підтримкою мінус 1.2×ATR. Вихід тільки при закритті свічки 4H/1D нижче цього рівня.',
+                    ),
                   ),
                 ],
               ),
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildMetricTile({
+    required String label,
+    required String value,
+    required Color valueColor,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                style: const TextStyle(color: AppColors.textDisabled, fontSize: 8.5),
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: TextStyle(
+                  color: valueColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11.5,
+                ),
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2204,13 +3356,17 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
           children: [
             Icon(icon, color: iconColor, size: 14),
             const SizedBox(width: 5),
-            Text(
-              title,
-              style: TextStyle(
-                color: iconColor,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: iconColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ),
           ],

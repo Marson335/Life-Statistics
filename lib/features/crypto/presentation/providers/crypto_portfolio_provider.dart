@@ -749,7 +749,11 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
   }
 
   Future<void> runAiAudit() async {
-    if (state.overview.holdings.isEmpty) return;
+    if (state.overview.holdings.isEmpty &&
+        state.groupedDcaCoins.isEmpty &&
+        state.binanceFuturesMargin <= 0) {
+      return;
+    }
 
     state = state.copyWith(isAuditing: true);
 
@@ -760,6 +764,10 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       final report = await groqSvc.auditPortfolio(
         holdings: state.overview.holdings,
         cashRatio: state.overview.cashRatio,
+        dcaCoins: state.groupedDcaCoins,
+        futuresMargin: state.binanceFuturesMargin,
+        futuresPnl: state.binanceFuturesPnl,
+        futuresPositions: state.binanceFuturesPositions,
       );
 
       state = state.copyWith(

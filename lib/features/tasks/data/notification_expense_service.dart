@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -46,6 +47,39 @@ class NotificationDiagnosticEntry {
   });
 }
 
+class AutoTrackFingerprint {
+  final double amount;
+  final bool isIncome;
+  final DateTime time;
+  final String? merchant;
+  final String? taskId;
+
+  AutoTrackFingerprint({
+    required this.amount,
+    required this.isIncome,
+    required this.time,
+    this.merchant,
+    this.taskId,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'amount': amount,
+        'isIncome': isIncome,
+        'time': time.millisecondsSinceEpoch,
+        'merchant': merchant,
+        'taskId': taskId,
+      };
+
+  factory AutoTrackFingerprint.fromJson(Map<String, dynamic> json) =>
+      AutoTrackFingerprint(
+        amount: (json['amount'] as num).toDouble(),
+        isIncome: json['isIncome'] as bool? ?? false,
+        time: DateTime.fromMillisecondsSinceEpoch(json['time'] as int),
+        merchant: json['merchant'] as String?,
+        taskId: json['taskId'] as String?,
+      );
+}
+
 class NotificationExpenseService {
   static final NotificationExpenseService _instance =
       NotificationExpenseService._internal();
@@ -54,13 +88,14 @@ class NotificationExpenseService {
 
   static const String prefKeyAutoTrack = 'auto_track_expenses';
   static const String prefKeyProcessedIds = 'processed_notification_keys';
+  static const String prefKeyFingerprints = 'auto_track_fingerprints_v2';
 
   StreamSubscription? _subscription;
   TaskRepository? _taskRepo;
   bool _isListening = false;
 
   final Set<String> _processedNotificationKeys = {};
-  final List<({double amount, bool isIncome, DateTime time})> _recentTransactions = [];
+  final List<AutoTrackFingerprint> _recentFingerprints = [];
   final List<NotificationDiagnosticEntry> diagnosticLogs = [];
 
   bool get isListening => _isListening;
@@ -85,6 +120,37 @@ class NotificationExpenseService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setStringList(prefKeyProcessedIds, _processedNotificationKeys.toList());
+    } catch (_) {}
+  }
+
+  Future<void> _initRecentFingerprints() async {
+    if (_recentFingerprints.isNotEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawList = prefs.getStringList(prefKeyFingerprints) ?? [];
+      final now = DateTime.now();
+      for (final raw in rawList) {
+        try {
+          final decoded = jsonDecode(raw) as Map<String, dynamic>;
+          final fp = AutoTrackFingerprint.fromJson(decoded);
+          if (now.difference(fp.time).inMinutes.abs() < 20) {
+            _recentFingerprints.add(fp);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveRecentFingerprints() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      // Keep only last 40 fingerprints
+      if (_recentFingerprints.length > 40) {
+        _recentFingerprints.removeRange(0, _recentFingerprints.length - 40);
+      }
+      final List<String> rawList =
+          _recentFingerprints.map((fp) => jsonEncode(fp.toJson())).toList();
+      await prefs.setStringList(prefKeyFingerprints, rawList);
     } catch (_) {}
   }
 
@@ -780,17 +846,78 @@ class NotificationExpenseService {
 
     final now = DateTime.now();
 
-    // 1. Precise time-window deduplication (prevents duplicates when Google Wallet and Bank both notify simultaneously)
-    _recentTransactions.removeWhere((item) => now.difference(item.time).inSeconds > 90);
-    final isDuplicate = _recentTransactions.any((item) =>
-        item.isIncome == parsed.isIncome &&
-        (item.amount - parsed.amount).abs() < 0.01);
+    // 1. Layer 1: Persistent 15-minute window deduplication (prevents duplicates when Google Wallet and Bank both notify)
+    await _initRecentFingerprints();
+    _recentFingerprints.removeWhere(
+        (item) => now.difference(item.time).inSeconds.abs() > 900);
 
-    if (isDuplicate) {
-      print('[NotificationExpenseService] ⏭ Duplicate transaction ignored (within 90s dual-notification window): ${parsed.amount} грн');
-      return true; // Mark as processed since it's an intentional duplicate
+    AutoTrackFingerprint? matchingFingerprint;
+    for (final fp in _recentFingerprints) {
+      if (fp.isIncome == parsed.isIncome &&
+          (fp.amount - parsed.amount).abs() < 0.01 &&
+          now.difference(fp.time).inSeconds.abs() <= 900) {
+        matchingFingerprint = fp;
+        break;
+      }
     }
-    _recentTransactions.add((amount: parsed.amount, isIncome: parsed.isIncome, time: now));
+
+    if (matchingFingerprint != null) {
+      print(
+          '[NotificationExpenseService] ⏭ Duplicate transaction prevented by persistent cache (Google Pay / Bank dual push): ${parsed.amount} грн');
+      // If the earlier notification had a generic title and the new one has a specific merchant name, update it!
+      if (matchingFingerprint.taskId != null &&
+          parsed.merchant != null &&
+          parsed.merchant!.isNotEmpty &&
+          (matchingFingerprint.merchant == null ||
+              matchingFingerprint.merchant!.toLowerCase().contains('гаманець') ||
+              matchingFingerprint.merchant!.toLowerCase().contains('витрата'))) {
+        try {
+          _taskRepo ??= TaskRepository();
+          final existing =
+              await _taskRepo!.getTaskById(matchingFingerprint.taskId!);
+          if (existing != null) {
+            final updated = existing.copyWith(title: parsed.merchant!);
+            await _taskRepo!.updateTask(updated);
+            print(
+                '[NotificationExpenseService] 📝 Enriched existing task "${existing.id}" with merchant: "${parsed.merchant}"');
+          }
+        } catch (_) {}
+      }
+      return true; // Mark as processed, do NOT create a second duplicate task
+    }
+
+    // 2. Layer 2: TaskRepository database check for today's transactions within 15 minutes
+    try {
+      _taskRepo ??= TaskRepository();
+      final todayTasks = await _taskRepo!.getTasksForDate(now).first;
+      Task? existingDuplicate;
+      for (final t in todayTasks) {
+        if (t.type != TaskType.finance) continue;
+        final spent = !parsed.isIncome ? t.moneySpent : t.moneyEarned;
+        if (spent == null) continue;
+        final amountMatches = (spent - parsed.amount).abs() < 0.01;
+        final timeDiff =
+            (t.createdAt ?? t.date).difference(now).inSeconds.abs();
+        if (amountMatches && timeDiff <= 900) {
+          existingDuplicate = t;
+          break;
+        }
+      }
+
+      if (existingDuplicate != null) {
+        print(
+            '[NotificationExpenseService] ⏭ Duplicate prevented by TaskRepository check: task "${existingDuplicate.title}" (${existingDuplicate.id}) already exists for ${parsed.amount} грн');
+        if (parsed.merchant != null &&
+            parsed.merchant!.isNotEmpty &&
+            existingDuplicate.title.toLowerCase().contains('витрата')) {
+          final updated = existingDuplicate.copyWith(title: parsed.merchant!);
+          await _taskRepo!.updateTask(updated);
+        }
+        return true;
+      }
+    } catch (e) {
+      print('[NotificationExpenseService] TaskRepository duplicate check error: $e');
+    }
 
     final taskTitle = parsed.merchant != null && parsed.merchant!.isNotEmpty
         ? parsed.merchant!
@@ -816,6 +943,16 @@ class NotificationExpenseService {
       await _taskRepo!.addTask(task);
       print(
           '[NotificationExpenseService] 💾 Successfully created financial task: "${task.title}" (Income: ${parsed.isIncome}, ${parsed.amount} грн)');
+
+      // Record fingerprint to persistent store
+      _recentFingerprints.add(AutoTrackFingerprint(
+        amount: parsed.amount,
+        isIncome: parsed.isIncome,
+        time: now,
+        merchant: parsed.merchant,
+        taskId: task.id,
+      ));
+      await _saveRecentFingerprints();
 
       // Show instant notification to the user
       final notiTitle = parsed.isIncome

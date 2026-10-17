@@ -172,7 +172,7 @@ class _DcaAddDialogState extends State<DcaAddDialog> {
                     Expanded(
                       flex: 2,
                       child: DropdownButtonFormField<String>(
-                        value: _walletType,
+                        initialValue: _walletType,
                         isExpanded: true,
                         decoration: const InputDecoration(
                           labelText: 'Гаманець',

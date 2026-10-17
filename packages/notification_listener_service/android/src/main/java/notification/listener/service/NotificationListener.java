@@ -5,10 +5,14 @@ import static notification.listener.service.models.ActionCache.cachedNotificatio
 
 import android.annotation.SuppressLint;
 import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.pm.ServiceInfo;
 import android.graphics.Bitmap;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
@@ -45,9 +49,96 @@ public class NotificationListener extends NotificationListenerService {
 
 
     private static final String TAG = "NotificationListener";
+    private static final String CHANNEL_ID = "finance_monitor_channel";
+    private static final int FOREGROUND_NOTIFICATION_ID = 9901;
+    private boolean isForegroundRunning = false;
+
     public static boolean isConnected = false;
     public static long lastConnectedTime = 0;
     public static long lastDisconnectedTime = 0;
+
+    private void startForegroundTracking() {
+        if (isForegroundRunning) return;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                    CHANNEL_ID,
+                    "Моніторинг фінансів",
+                    NotificationManager.IMPORTANCE_LOW
+                );
+                channel.setDescription("Фонове автофіксування витрат");
+                channel.setShowBadge(false);
+                NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
+                if (manager != null) {
+                    manager.createNotificationChannel(channel);
+                }
+            }
+
+            Intent launchIntent = getPackageManager().getLaunchIntentForPackage(getPackageName());
+            PendingIntent pendingIntent = null;
+            if (launchIntent != null) {
+                int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    flags |= PendingIntent.FLAG_IMMUTABLE;
+                }
+                pendingIntent = PendingIntent.getActivity(this, 0, launchIntent, flags);
+            }
+
+            Notification.Builder builder;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                builder = new Notification.Builder(this, CHANNEL_ID);
+            } else {
+                builder = new Notification.Builder(this);
+            }
+
+            builder.setContentTitle("Life Statistics")
+                   .setContentText("Автоматична фіксація витрат активна (24/7)")
+                   .setSmallIcon(getApplicationInfo().icon)
+                   .setOngoing(true);
+
+            if (pendingIntent != null) {
+                builder.setContentIntent(pendingIntent);
+            }
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(FOREGROUND_NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            } else {
+                startForeground(FOREGROUND_NOTIFICATION_ID, builder.build());
+            }
+            isForegroundRunning = true;
+            Log.i(TAG, "🚀 Foreground Service started: 24/7 financial tracking active");
+        } catch (Exception e) {
+            Log.e(TAG, "Error starting foreground service: " + e.getMessage());
+        }
+    }
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        instance = this;
+        startForegroundTracking();
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        super.onStartCommand(intent, flags, startId);
+        startForegroundTracking();
+        return START_STICKY;
+    }
+
+    @Override
+    public void onTaskRemoved(Intent rootIntent) {
+        super.onTaskRemoved(rootIntent);
+        Log.i(TAG, "App swiped from Recents - ensuring NotificationListener stays alive");
+        startForegroundTracking();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            try {
+                requestRebind(new ComponentName(this, NotificationListener.class));
+            } catch (Exception e) {
+                Log.e(TAG, "Error in requestRebind onTaskRemoved: " + e.getMessage());
+            }
+        }
+    }
 
     @Override
     public void onListenerConnected() {
@@ -55,6 +146,7 @@ public class NotificationListener extends NotificationListenerService {
         instance = this;
         isConnected = true;
         lastConnectedTime = System.currentTimeMillis();
+        startForegroundTracking();
         Log.i(TAG, "✅ Listener CONECTADO correctamente al sistema");
 
         Intent intent = new Intent(NotificationConstants.INTENT);
