@@ -205,6 +205,23 @@ public class NotificationListener extends NotificationListenerService {
                combined.contains("content hidden");
     }
 
+    public static boolean isGooglePayOrWallet(String packageName, String title, String content) {
+        if (packageName != null) {
+            String lowerPkg = packageName.toLowerCase();
+            if (lowerPkg.contains("wallet") ||
+                lowerPkg.contains("walletnfcrel") ||
+                lowerPkg.equals("com.google.android.apps.walletnfcrel") ||
+                lowerPkg.equals("com.google.android.apps.wallet")) {
+                return true;
+            }
+        }
+        String combined = ((title != null ? title : "") + " " + (content != null ? content : "")).toLowerCase();
+        return combined.contains("google гаманець") ||
+               combined.contains("гаманець google") ||
+               combined.contains("google wallet") ||
+               combined.contains("google pay");
+    }
+
     public static String extractNotificationTitle(Bundle extras) {
         if (extras == null) return null;
         CharSequence title = extras.getCharSequence(Notification.EXTRA_TITLE);
@@ -289,6 +306,9 @@ public class NotificationListener extends NotificationListenerService {
             if (packageName != null && (packageName.equals(getPackageName()) || packageName.contains("life_statistics"))) {
                 return false;
             }
+            if (isGooglePayOrWallet(packageName, title, content)) {
+                return false;
+            }
             if (isRedactedContent(title, content)) {
                 return false;
             }
@@ -371,6 +391,9 @@ public class NotificationListener extends NotificationListenerService {
                 if ((title == null || title.isEmpty()) && (content == null || content.isEmpty()) && n.tickerText != null) {
                     content = n.tickerText.toString().trim();
                 }
+                if (isGooglePayOrWallet(pkg, title, content)) {
+                    continue;
+                }
                 if (!isRedactedContent(title, content) && (title != null || content != null)) {
                     boolean newlyAdded = saveToPendingQueue(pkg, title, content, sbn.getId(), sbn.getPostTime());
                     if (newlyAdded) {
@@ -452,6 +475,10 @@ public class NotificationListener extends NotificationListenerService {
 
                 if ((safeTitle == null || safeTitle.isEmpty()) && (safeText == null || safeText.isEmpty()) && notif.tickerText != null) {
                     safeText = notif.tickerText.toString().trim();
+                }
+
+                if (isGooglePayOrWallet(packageName, safeTitle, safeText)) {
+                    return;
                 }
 
                 if (safeTitle != null && safeTitle.length() > 200) {
@@ -569,6 +596,10 @@ public class NotificationListener extends NotificationListenerService {
             String content = extractNotificationContent(extras);
             if ((title == null || title.isEmpty()) && (content == null || content.isEmpty()) && notification.tickerText != null) {
                 content = notification.tickerText.toString().trim();
+            }
+
+            if (isGooglePayOrWallet(pkg, title, content)) {
+                continue;
             }
 
             notifyData.put("id", sbn.getId());

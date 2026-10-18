@@ -5,43 +5,54 @@ void main() {
   final service = NotificationExpenseService();
 
   group('NotificationExpenseService Parser Tests', () {
-    test('Google Wallet payment: MAGAZYN 0065', () {
+    test('Google Wallet payment: MAGAZYN 0065 should be ignored to avoid duplicate with bank push', () {
       final parsed = service.parseNotification(
         packageName: 'com.google.android.apps.walletnfcrel',
         title: 'MAGAZYN 0065',
         content: '204,30 грн – monobank ••4394',
       );
 
-      expect(parsed, isNotNull);
-      expect(parsed!.amount, equals(204.30));
-      expect(parsed.isIncome, isFalse);
-      expect(parsed.merchant, equals('MAGAZYN 0065'));
+      expect(parsed, isNull);
     });
 
-    test('Google Wallet payment with trailing dots: KAFE MALENKA PE...', () {
+    test('Google Wallet payment with trailing dots: KAFE MALENKA PE... should be ignored', () {
       final parsed = service.parseNotification(
         packageName: 'com.google.android.apps.walletnfcrel',
         title: 'KAFE MALENKA PE...',
         content: '40,00 грн – monobank ••4394',
       );
 
-      expect(parsed, isNotNull);
-      expect(parsed!.amount, equals(40.00));
-      expect(parsed.isIncome, isFalse);
-      expect(parsed.merchant, equals('KAFE MALENKA PE'));
+      expect(parsed, isNull);
     });
 
-    test('Google Wallet payment: Zootovari', () {
+    test('Google Wallet payment: Zootovari should be ignored', () {
       final parsed = service.parseNotification(
         packageName: 'com.google.android.apps.walletnfcrel',
         title: 'Zootovari',
         content: '125,00 грн – monobank ••4394',
       );
 
-      expect(parsed, isNotNull);
-      expect(parsed!.amount, equals(125.00));
-      expect(parsed.isIncome, isFalse);
-      expect(parsed.merchant, equals('Zootovari'));
+      expect(parsed, isNull);
+    });
+
+    test('Google Pay notification with explicit title should be ignored', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.google.android.gms',
+        title: 'Google Pay',
+        content: 'Оплата 150 ₴ в Сільпо',
+      );
+
+      expect(parsed, isNull);
+    });
+
+    test('Google Гаманець notification should be ignored', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.google.android.apps.wallet',
+        title: 'Google Гаманець',
+        content: '58.00 ₴ – monobank ••4394',
+      );
+
+      expect(parsed, isNull);
     });
 
     test('Privat24 payment: Комуналка та Інтернет', () {

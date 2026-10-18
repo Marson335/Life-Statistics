@@ -23,6 +23,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
   late TabController _tabController;
   int _binanceSubTab = 0; // 0: Spot, 1: Futures, 2: Earn
   int _dcaFilterIndex = 0; // 0: Всі, 1: Binance, 2: Ручні
+  int _radarFilterIndex = 0; // 0: Всі, 1: Купувати зараз, 2: Лімітка / Пробій
 
   @override
   void initState() {
@@ -2028,16 +2029,27 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
   }
 
   void _openAddDcaFromRadar(AiMarketOpportunity opp, CryptoPortfolioNotifier notifier) {
+    final statusTxt = switch (opp.entryStatus) {
+      RadarEntryStatus.waitBreakout => 'STOP-LIMIT ПРОБІЙ \$${_formatDialogPrice(opp.triggerPrice)}',
+      RadarEntryStatus.waitPullback => 'ЛІМІТКА НА ВІДКАТІ \$${_formatDialogPrice(opp.triggerPrice)}',
+      _ => 'ВХІД ЗАРАЗ \$${_formatDialogPrice(opp.currentPrice)}',
+    };
+    final sizeTxt = opp.positionSizeUsd > 0
+        ? '${opp.positionSizePct.toStringAsFixed(1)}% депозиту (~\$${opp.positionSizeUsd.toStringAsFixed(0)})'
+        : '${opp.positionSizePct.toStringAsFixed(1)}% депозиту';
+
     showDialog(
       context: context,
       builder: (ctx) => DcaAddDialog(
         initialSymbol: opp.symbol,
-        initialPrice: opp.currentPrice,
+        initialPrice: opp.entryReference,
         initialNotes:
-            'AI-Радар [${opp.setupType}]: Вхід \$${_formatDialogPrice(opp.entryZoneMin)}-\$${_formatDialogPrice(opp.entryZoneMax)}, '
+            'AI-Радар v3 [${opp.setupType} | $statusTxt]: '
+            'Зона \$${_formatDialogPrice(opp.entryZoneMin)}-\$${_formatDialogPrice(opp.entryZoneMax)}, '
+            'Розмір: $sizeTxt (ризик ${opp.riskPerTradePct.toStringAsFixed(2)}%), '
             'TP1 \$${_formatDialogPrice(opp.targetPrice1)} (50% + Б/З), '
-            'TP2 \$${_formatDialogPrice(opp.targetPrice2)}, '
-            'SL \$${_formatDialogPrice(opp.stopLoss)} (закриття 4H/1D нижче рівня).',
+            'TP2 \$${_formatDialogPrice(opp.targetPrice2)} (30% + 20% трейлінг EMA20), '
+            'SL \$${_formatDialogPrice(opp.stopLoss)} (закриття 1D, авар. \$${_formatDialogPrice(opp.hardStopPrice > 0 ? opp.hardStopPrice : opp.stopLoss * 0.95)}, тайм-стоп ${opp.timeStopDays}д).',
         onAdd: (tx) => notifier.addDcaTransaction(tx),
       ),
     );
@@ -2065,11 +2077,21 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
   }
 
   // ==========================================
-  // 5. ВКЛАДКА: AI-РАДАР МОНЕТ (350+ ПАР BINANCE)
+  // 5. ВКЛАДКА: AI-РАДАР МОНЕТ (КВАНТОВИЙ ДВИГУН v3)
   // ==========================================
   Widget _buildAiRadarTab(CryptoPortfolioState state, CryptoPortfolioNotifier notifier) {
     final report = state.radarReport;
     final isScanning = state.isScanningMarket;
+
+    final allOpps = report?.opportunities ?? const <AiMarketOpportunity>[];
+    final buyNowOpps = allOpps.where((o) => o.entryStatus == RadarEntryStatus.buyNow).toList();
+    final pendingOpps = allOpps.where((o) => o.entryStatus != RadarEntryStatus.buyNow).toList();
+
+    final filteredOpps = switch (_radarFilterIndex) {
+      1 => buyNowOpps,
+      2 => pendingOpps,
+      _ => allOpps,
+    };
 
     return RefreshIndicator(
       color: AppColors.accent,
@@ -2112,18 +2134,18 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            'Smart Money AI-Радар (350+ пар)',
+                            'Quant Smart Money Радар v3 (350+ пар)',
                             style: TextStyle(
                               color: AppColors.textPrimary,
                               fontWeight: FontWeight.bold,
-                              fontSize: 16,
+                              fontSize: 15.5,
                             ),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
                           SizedBox(height: 2),
                           Text(
-                            'Order Flow (Taker Buy) · R:R >= 1:3 · Точні TP1/TP2 та ATR Stop-Loss',
+                            '230D Закриті свічки · RS vs BTC · Order Flow Δ · Історичний Hit-Rate TP1',
                             style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -2135,8 +2157,8 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 ),
                 const SizedBox(height: 10),
                 const Text(
-                  '5-ступеневий алго-скринер: відсікає «падаючі ножі», аналізує 90-денний потік ринкових покупок китів (Taker Buy Volume), бичачі дивергенції та розраховує структурні рівні Тейк-Профіту (Fibo 0.382/0.618) і захищеного Стоп-Лосу (Support - 1.2×ATR).',
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.35),
+                  'Режимно-адаптивний алго-скринер: визначає фазу ринку (Risk-On / Neutral / Risk-Off) та ширину ринку (% монет > EMA50), аналізує до 200 ліквідних пар за 6 крос-секційними факторами, перевіряє історичний Hit-Rate досягнення TP1 за 200 днів, відсікає корельовані клони та розраховує точний розмір позиції від ризику.',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5, height: 1.35),
                 ),
                 const SizedBox(height: 14),
                 if (isScanning) ...[
@@ -2187,9 +2209,9 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                       ),
                       icon: const Icon(Icons.radar_rounded, size: 20),
                       label: Text(
-                        (report == null || report.opportunities.isEmpty)
-                            ? 'Запустити Smart Money AI-Радар'
-                            : 'Пересканувати ринок (350+ монет)',
+                        (report == null || report.totalCoinsScanned == 0)
+                            ? 'Запустити Quant AI-Радар v3'
+                            : 'Пересканувати ринок (230D Квант-Аналіз)',
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                       ),
                       onPressed: () => notifier.scanMarketRadar(),
@@ -2201,11 +2223,11 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
           ),
           const SizedBox(height: 16),
 
-          // Якщо є результати звіту
-          if (report != null && report.opportunities.isNotEmpty) ...[
-            // Картка режиму ринку та висновку комітету
+          // Якщо є результати звіту (навіть якщо 0 монет пройшли жорсткий фільтр — показуємо режим і воронку!)
+          if (report != null && (report.opportunities.isNotEmpty || report.totalCoinsScanned > 0)) ...[
+            // Картка режиму ринку, ширини ринку та воронки відбору
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
                 color: AppColors.surface,
                 borderRadius: BorderRadius.circular(16),
@@ -2216,16 +2238,16 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 children: [
                   Row(
                     children: [
-                      const Icon(Icons.groups_rounded, color: AppColors.blueTask, size: 18),
+                      const Icon(Icons.analytics_outlined, color: AppColors.blueTask, size: 18),
                       const SizedBox(width: 6),
                       const Expanded(
                         child: Text(
-                          'ВИСНОВОК АЛГО-КОМІТЕТУ',
+                          'МАКРО-РЕЖИМ ТА ВОРОНКА ВІДБОРУ',
                           style: TextStyle(
                             color: AppColors.textSecondary,
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
-                            letterSpacing: 0.8,
+                            letterSpacing: 0.7,
                           ),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
@@ -2238,24 +2260,24 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                   if (report.btcTrend.isNotEmpty && report.btcTrend != '—') ...[
                     const SizedBox(height: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                       decoration: BoxDecoration(
                         color: AppColors.surfaceVariant,
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(7),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.currency_bitcoin_rounded, size: 14, color: Color(0xFFF3BA2F)),
-                          const SizedBox(width: 4),
+                          const Icon(Icons.currency_bitcoin_rounded, size: 15, color: Color(0xFFF3BA2F)),
+                          const SizedBox(width: 5),
                           Expanded(
                             child: Text(
-                              'Контекст BTC: ${report.btcTrend}',
+                              report.btcTrend,
                               style: const TextStyle(
                                 color: AppColors.textSecondary,
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
                               ),
-                              maxLines: 1,
+                              maxLines: 2,
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -2263,12 +2285,72 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                       ),
                     ),
                   ],
+
+                  // 3-колонкова панель макро-показників (Ширина ринку, Ризик на угоду, Воронка)
+                  if (report.breadthPct >= 0 || report.coinsDeepAnalyzed > 0) ...[
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        _buildRadarSummaryStat(
+                          label: 'Ширина (>EMA50)',
+                          value: report.breadthPct >= 0 ? '${report.breadthPct.toStringAsFixed(0)}%' : '—',
+                          valueColor: report.breadthPct >= 55
+                              ? AppColors.greenTask
+                              : (report.breadthPct <= 35 ? AppColors.redTask : AppColors.warning),
+                        ),
+                        const SizedBox(width: 6),
+                        _buildRadarSummaryStat(
+                          label: 'Ризик / угоду',
+                          value: '${report.riskPerTradePct.toStringAsFixed(2)}%',
+                          valueColor: AppColors.accentLight,
+                        ),
+                        const SizedBox(width: 6),
+                        _buildRadarSummaryStat(
+                          label: 'Аналіз 230D',
+                          value: '${report.coinsDeepAnalyzed} пар',
+                          valueColor: AppColors.blueTask,
+                        ),
+                        const SizedBox(width: 6),
+                        _buildRadarSummaryStat(
+                          label: 'Сетапи ➔ Топ',
+                          value: '${report.setupsFound} ➔ ${report.opportunities.length}',
+                          valueColor: AppColors.greenTask,
+                        ),
+                      ],
+                    ),
+                  ],
+
+                  // Деталізація воронки відсіву (чому відсіяні інші монети)
+                  if (report.funnel.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 5,
+                      children: [
+                        if ((report.funnel['illiquid'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Низька ліквідність: -${report.funnel['illiquid']}'),
+                        if ((report.funnel['newListing'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Нові <120д: -${report.funnel['newListing']}'),
+                        if ((report.funnel['pumpDump'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Памп/Дамп >45%: -${report.funnel['pumpDump']}'),
+                        if ((report.funnel['noSetup'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Без сетапу: -${report.funnel['noSetup']}'),
+                        if ((report.funnel['lowRR'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Слабкий R:R: -${report.funnel['lowRR']}'),
+                        if ((report.funnel['wideStop'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Широкий стоп >18%: -${report.funnel['wideStop']}'),
+                        if ((report.funnel['correlated'] ?? 0) > 0)
+                          _buildRadarFunnelChip('Дублікати (корел. >0.85): -${report.funnel['correlated']}'),
+                      ],
+                    ),
+                  ],
+
                   const SizedBox(height: 10),
                   Text(
                     report.macroSummary,
                     style: const TextStyle(
                       color: AppColors.textPrimary,
-                      fontSize: 13,
+                      fontSize: 12.5,
                       height: 1.4,
                     ),
                   ),
@@ -2280,14 +2362,40 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 ],
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
 
-            // Список можливостей
+            // Перемикач фільтрів точок входу (Всі / Купувати зараз / Лімітка або Пробій)
+            if (allOpps.isNotEmpty) ...[
+              Row(
+                children: [
+                  _buildRadarFilterPill(
+                    index: 0,
+                    label: 'Всі (${allOpps.length})',
+                    activeColor: AppColors.accentLight,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildRadarFilterPill(
+                    index: 1,
+                    label: '🟢 Купувати зараз (${buyNowOpps.length})',
+                    activeColor: AppColors.greenTask,
+                  ),
+                  const SizedBox(width: 6),
+                  _buildRadarFilterPill(
+                    index: 2,
+                    label: '⏳ Очікування (${pendingOpps.length})',
+                    activeColor: AppColors.warning,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+            ],
+
+            // Заголовок списку можливостей
             Row(
               children: [
                 Expanded(
                   child: Text(
-                    'ТОП-ЗНАХІДКИ ДЛЯ DCA-НАБОРУ (${report.opportunities.length})',
+                    'КВАНТОВІ СИГНАЛИ (${filteredOpps.length})',
                     style: const TextStyle(
                       color: AppColors.textSecondary,
                       fontSize: 12,
@@ -2300,23 +2408,127 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 ),
                 const SizedBox(width: 8),
                 Text(
-                  '${report.totalCoinsScanned} пар',
+                  'Усього пар: ${report.totalCoinsScanned}',
                   style: const TextStyle(color: AppColors.textDisabled, fontSize: 11),
                 ),
               ],
             ),
             const SizedBox(height: 8),
 
-            ...report.opportunities.map((opp) => _RadarOpportunityCard(
-                  opportunity: opp,
-                  onAddToDca: () => _openAddDcaFromRadar(opp, notifier),
-                )),
+            if (filteredOpps.isEmpty)
+              _buildEmptyState(
+                _radarFilterIndex == 1
+                    ? 'Зараз немає сетапів зі статусом «Купувати зараз».\nПерегляньте вкладку «⏳ Очікування» — там монети, де варто виставити лімітний ордер на відкаті або stop-limit на пробій.'
+                    : 'У вибраній категорії немає активних сигналів.',
+              )
+            else
+              ...filteredOpps.map((opp) => _RadarOpportunityCard(
+                    opportunity: opp,
+                    onAddToDca: () => _openAddDcaFromRadar(opp, notifier),
+                  )),
           ] else if (!isScanning) ...[
             _buildEmptyState(
-              'AI-Радар ще не сканував ринок у цій сесії.\n\nНатисніть кнопку вище, щоб просканувати 350+ спотових пар Binance, виявити глибокі просадки, перепроданість по RSI та отримати готові DCA-стратегії.',
+              'AI-Радар ще не сканував ринок у цій сесії.\n\nНатисніть кнопку вище, щоб проаналізувати до 200 ліквідних пар Binance за 230 закритими денними свічками, оцінити режим ринку, перевірити історичний Hit-Rate TP1 та отримати чіткі точки входу.',
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildRadarSummaryStat({
+    required String label,
+    required String value,
+    required Color valueColor,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 5),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                style: const TextStyle(color: AppColors.textDisabled, fontSize: 9),
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: TextStyle(
+                  color: valueColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11.5,
+                ),
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRadarFunnelChip(String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
+      ),
+      child: Text(
+        text,
+        style: const TextStyle(color: AppColors.textSecondary, fontSize: 9.5),
+      ),
+    );
+  }
+
+  Widget _buildRadarFilterPill({
+    required int index,
+    required String label,
+    required Color activeColor,
+  }) {
+    final isSelected = _radarFilterIndex == index;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _radarFilterIndex = index),
+        borderRadius: BorderRadius.circular(9),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 6),
+          decoration: BoxDecoration(
+            color: isSelected ? activeColor.withValues(alpha: 0.16) : AppColors.surface,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(
+              color: isSelected ? activeColor : AppColors.border,
+              width: isSelected ? 1.2 : 1.0,
+            ),
+          ),
+          alignment: Alignment.center,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? activeColor : AppColors.textSecondary,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                fontSize: 11,
+              ),
+              maxLines: 1,
+            ),
+          ),
+        ),
       ),
     );
   }
@@ -2325,21 +2537,21 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     Color color;
     String label = regime;
     switch (regime.toUpperCase()) {
+      case 'RISK_ON':
       case 'ACCUMULATION':
         color = AppColors.greenTask;
-        label = 'Зона накопичення';
+        label = regime.toUpperCase() == 'RISK_ON' ? '🟢 RISK-ON (Бичачий)' : 'Зона накопичення';
         break;
+      case 'NEUTRAL':
+      case 'BULL_PULLBACK':
+      case 'CONSOLIDATION':
+        color = AppColors.blueTask;
+        label = regime.toUpperCase() == 'NEUTRAL' ? '🟡 NEUTRAL (Змішаний)' : 'Консолідація';
+        break;
+      case 'RISK_OFF':
       case 'BEARISH_DIP':
         color = AppColors.warning;
-        label = 'Ведмежа просадка';
-        break;
-      case 'BULL_PULLBACK':
-        color = AppColors.blueTask;
-        label = 'Бичачий відкат';
-        break;
-      case 'CONSOLIDATION':
-        color = AppColors.accentLight;
-        label = 'Консолідація';
+        label = regime.toUpperCase() == 'RISK_OFF' ? '🛡️ RISK-OFF (Захисний)' : 'Ведмежа просадка';
         break;
       default:
         color = AppColors.textSecondary;

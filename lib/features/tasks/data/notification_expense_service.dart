@@ -348,7 +348,16 @@ class NotificationExpenseService {
     if (packageName.contains('life_statistics')) return true;
     if (title.isEmpty && content.isEmpty) return true;
 
-    final lowerCheck = '$title $content'.toLowerCase();
+    final lowerCheck = '$packageName $title $content'.toLowerCase();
+    if (packageName.toLowerCase().contains('wallet') ||
+        lowerCheck.contains('google гаманець') ||
+        lowerCheck.contains('гаманець google') ||
+        lowerCheck.contains('google pay') ||
+        lowerCheck.contains('google wallet')) {
+      print('[NotificationExpenseService] ⏭️ Ignored Google Pay/Wallet notification: "$title" - "$content"');
+      return true;
+    }
+
     if (lowerCheck.contains('чутливий вміст') ||
         lowerCheck.contains('sensitive notification') ||
         lowerCheck.contains('скрыто содержимое') ||
@@ -415,11 +424,26 @@ class NotificationExpenseService {
   }) {
     if (packageName.contains('life_statistics')) return null;
 
+    final lowerPkg = packageName.toLowerCase();
+    if (lowerPkg.contains('wallet') ||
+        lowerPkg == 'com.google.android.apps.walletnfcrel' ||
+        lowerPkg == 'com.google.android.apps.wallet') {
+      return null;
+    }
+
     // 1. Normalize spaces, non-breaking spaces (\u00A0), en-dash (\u2013), em-dash (\u2014), minus (\u2212)
     final cleanTitle = title.replaceAll('\u00A0', ' ').trim();
     final cleanContent = content.replaceAll('\u00A0', ' ').trim();
     final combinedText = '$cleanTitle $cleanContent';
     final lowerCombined = combinedText.toLowerCase();
+
+    // Ignore Google Pay / Google Wallet notifications to prevent duplicates with bank notifications
+    if (lowerCombined.contains('google гаманець') ||
+        lowerCombined.contains('гаманець google') ||
+        lowerCombined.contains('google wallet') ||
+        lowerCombined.contains('google pay')) {
+      return null;
+    }
 
     // Ignore Android lockscreen redacted placeholders
     if (lowerCombined.contains('чутливий вміст') ||
@@ -432,9 +456,6 @@ class NotificationExpenseService {
     final knownBankPackages = [
       'com.ftband.mono', // Monobank
       'ua.privatbank.ap24', // Privat24
-      'com.google.android.apps.walletnfcrel', // Google Wallet / Pay
-      'com.google.android.apps.wallet',
-      'com.google.android.gms', // Google Play Services (Google Pay tap)
       'ua.pumb.mobile', // PUMB
       'com.pumb',
       'ua.sensebank.sense', // Sense Bank
@@ -514,8 +535,6 @@ class NotificationExpenseService {
     final hasCardOrBankIndicator = lowerCombined.contains('monobank') ||
         lowerCombined.contains('privat') ||
         lowerCombined.contains('приват') ||
-        lowerCombined.contains('гаманець') ||
-        lowerCombined.contains('wallet') ||
         lowerCombined.contains('картк') ||
         lowerCombined.contains('card') ||
         lowerCombined.contains('пумб') ||

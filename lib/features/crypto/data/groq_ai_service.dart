@@ -1002,42 +1002,227 @@ class GroqAiService {
     );
   }
 
+  static const Map<String, ({String name, String sector})> _knownTokenMeta = {
+    'BTC': (name: 'Bitcoin', sector: 'Store of Value'),
+    'ETH': (name: 'Ethereum', sector: 'Layer 1 / Smart Contracts'),
+    'BNB': (name: 'BNB Chain', sector: 'Exchange & Layer 1'),
+    'SOL': (name: 'Solana', sector: 'High-Perf Layer 1'),
+    'XRP': (name: 'XRP Ledger', sector: 'Payments'),
+    'ADA': (name: 'Cardano', sector: 'Layer 1'),
+    'AVAX': (name: 'Avalanche', sector: 'Layer 1 / Subnets'),
+    'DOT': (name: 'Polkadot', sector: 'Layer 0 / Interop'),
+    'LINK': (name: 'Chainlink', sector: 'Oracle & CCIP'),
+    'TON': (name: 'Toncoin', sector: 'Layer 1 / Web3'),
+    'SUI': (name: 'Sui Network', sector: 'Move Layer 1'),
+    'APT': (name: 'Aptos', sector: 'Move Layer 1'),
+    'SEI': (name: 'Sei Network', sector: 'Parallel EVM L1'),
+    'NEAR': (name: 'NEAR Protocol', sector: 'AI & Sharded L1'),
+    'ICP': (name: 'Internet Computer', sector: 'Decentralized Cloud'),
+    'INJ': (name: 'Injective', sector: 'DeFi Layer 1'),
+    'TIA': (name: 'Celestia', sector: 'Modular DA'),
+    'ATOM': (name: 'Cosmos Hub', sector: 'Interchain L0'),
+    'FTM': (name: 'Fantom / Sonic', sector: 'Layer 1'),
+    'S': (name: 'Sonic', sector: 'High-Speed L1'),
+    'ALGO': (name: 'Algorand', sector: 'Layer 1'),
+    'HBAR': (name: 'Hedera', sector: 'Enterprise DLT'),
+    'EGLD': (name: 'MultiversX', sector: 'Layer 1'),
+    'VET': (name: 'VeChain', sector: 'Supply Chain L1'),
+    'ARB': (name: 'Arbitrum', sector: 'Ethereum Layer 2'),
+    'OP': (name: 'Optimism', sector: 'Ethereum Layer 2'),
+    'POL': (name: 'Polygon', sector: 'Layer 2 / ZK'),
+    'MATIC': (name: 'Polygon', sector: 'Layer 2 / ZK'),
+    'STRK': (name: 'Starknet', sector: 'ZK-Rollup L2'),
+    'ZK': (name: 'ZKsync', sector: 'ZK-Rollup L2'),
+    'IMX': (name: 'Immutable', sector: 'Gaming Layer 2'),
+    'STX': (name: 'Stacks', sector: 'Bitcoin Layer 2'),
+    'MNT': (name: 'Mantle', sector: 'Modular Layer 2'),
+    'METIS': (name: 'Metis', sector: 'Ethereum Layer 2'),
+    'UNI': (name: 'Uniswap', sector: 'DeFi DEX'),
+    'AAVE': (name: 'Aave', sector: 'DeFi Lending'),
+    'MKR': (name: 'Maker / Sky', sector: 'DeFi & Stablecoin'),
+    'LDO': (name: 'Lido DAO', sector: 'Liquid Staking'),
+    'PENDLE': (name: 'Pendle', sector: 'Yield DeFi'),
+    'ENA': (name: 'Ethena', sector: 'Synthetic Yield'),
+    'RUNE': (name: 'THORChain', sector: 'Cross-Chain DEX'),
+    'JUP': (name: 'Jupiter', sector: 'Solana DEX Aggregator'),
+    'RAY': (name: 'Raydium', sector: 'Solana AMM'),
+    'CRV': (name: 'Curve DAO', sector: 'DeFi AMM'),
+    'DYDX': (name: 'dYdX', sector: 'Perp DEX'),
+    'GMX': (name: 'GMX', sector: 'Perp DEX'),
+    'SNX': (name: 'Synthetix', sector: 'Derivatives DeFi'),
+    'COMP': (name: 'Compound', sector: 'DeFi Lending'),
+    'CAKE': (name: 'PancakeSwap', sector: 'DEX'),
+    '1INCH': (name: '1inch Network', sector: 'DEX Aggregator'),
+    'EIGEN': (name: 'EigenLayer', sector: 'Restaking'),
+    'ETHFI': (name: 'ether.fi', sector: 'Liquid Restaking'),
+    'ONDO': (name: 'Ondo Finance', sector: 'RWA Tokenization'),
+    'FET': (name: 'Artificial Superintelligence', sector: 'AI Agents'),
+    'RENDER': (name: 'Render Network', sector: 'AI & GPU DePIN'),
+    'RNDR': (name: 'Render Network', sector: 'AI & GPU DePIN'),
+    'TAO': (name: 'Bittensor', sector: 'Decentralized AI'),
+    'WLD': (name: 'Worldcoin', sector: 'AI & Identity'),
+    'ARKM': (name: 'Arkham', sector: 'AI On-Chain Intel'),
+    'AKT': (name: 'Akash Network', sector: 'AI Cloud DePIN'),
+    'IO': (name: 'io.net', sector: 'GPU DePIN'),
+    'FIL': (name: 'Filecoin', sector: 'Storage DePIN'),
+    'AR': (name: 'Arweave', sector: 'Permanent Storage'),
+    'GRT': (name: 'The Graph', sector: 'Web3 Indexing'),
+    'PYTH': (name: 'Pyth Network', sector: 'High-Freq Oracle'),
+    'API3': (name: 'API3', sector: 'Oracle'),
+    'TRB': (name: 'Tellor', sector: 'Oracle'),
+    'ZRO': (name: 'LayerZero', sector: 'Omnichain Interop'),
+    'W': (name: 'Wormhole', sector: 'Cross-Chain Bridge'),
+    'AXL': (name: 'Axelar', sector: 'Cross-Chain Interop'),
+    'ENS': (name: 'Ethereum Name Service', sector: 'Web3 Identity'),
+    'DOGE': (name: 'Dogecoin', sector: 'Large-Cap Meme'),
+    'SHIB': (name: 'Shiba Inu', sector: 'Meme Ecosystem'),
+    'PEPE': (name: 'Pepe', sector: 'High-Liq Meme'),
+    'WIF': (name: 'dogwifhat', sector: 'Solana Meme'),
+    'BONK': (name: 'Bonk', sector: 'Solana Meme'),
+    'FLOKI': (name: 'Floki', sector: 'Meme & Utility'),
+    'ORDI': (name: 'ORDI', sector: 'BRC-20 / Bitcoin'),
+  };
+
   Future<AiMarketRadarReport> enrichRadarReport(AiMarketRadarReport report) async {
-    if (!isConfigured || report.opportunities.isEmpty) return report;
-    try {
-      final prompt = '''
-Ти — головний інституційний криптоаналітик. Коротко (2-3 речення) підсумуй ринкову картину для спотового радара:
-Режим: ${report.marketRegime}
-Тренд BTC: ${report.btcTrend}
-Знайдено сетапів: ${report.opportunities.length}
-Топові активи: ${report.opportunities.take(5).map((o) => o.symbol).join(', ')}
-Відповідай українською мовою лаконічно, без зайвих вступів.
-''';
-      final response = await http.post(
-        Uri.parse(_groqUrl),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $apiKey',
-        },
-        body: jsonEncode({
-          'model': _model,
-          'messages': [
-            {'role': 'user', 'content': prompt}
-          ],
-          'temperature': 0.3,
-          'max_tokens': 300,
-        }),
+    // 1. Спочатку підставляємо відомі назви та сектори монет (навіть якщо AI офлайн)
+    List<AiMarketOpportunity> enrichedOpps = report.opportunities.map((opp) {
+      final meta = _knownTokenMeta[opp.symbol.toUpperCase()];
+      final resolvedName = (opp.name.isEmpty || opp.name == opp.symbol)
+          ? (meta?.name ?? opp.symbol)
+          : opp.name;
+      final resolvedSector = opp.sector.isEmpty
+          ? (meta?.sector ?? 'Spot Alpha')
+          : opp.sector;
+      final defaultAiCommentary =
+          'Квантовий профіль ${opp.symbol}: сетап «${opp.setupType}» з оцінкою ${opp.confidenceScore}/100 '
+          '(RS 30D: ${opp.rsVsBtc30d >= 0 ? '+' : ''}${opp.rsVsBtc30d.toStringAsFixed(1)}% до BTC, '
+          'Order Flow Δ: ${opp.takerDeltaPp >= 0 ? '+' : ''}${opp.takerDeltaPp.toStringAsFixed(1)} п.п., '
+          'зважений R:R 1:${opp.blendedRR.toStringAsFixed(2)}).';
+      return opp.withAi(
+        name: resolvedName,
+        sector: resolvedSector,
+        aiCommentary: opp.aiCommentary.isNotEmpty ? opp.aiCommentary : defaultAiCommentary,
       );
+    }).toList();
+
+    final baseWithMeta = report.copyWith(opportunities: enrichedOpps);
+    if (!isConfigured || enrichedOpps.isEmpty) return baseWithMeta;
+
+    try {
+      const systemPrompt = '''
+Ти — Головний Квантовий Трейдер та Інституційний Портфельний Менеджер.
+Тобі передано результати математичного скринінгу Binance Spot (v3 Engine: 230 закритих денних свічок, EMA50/200, крос-секційні перцентилі RS vs BTC 30D/90D, дельта Taker Buy відносно власної 60D норми, стиснення VCP, перевірка опору за Pivot Highs та бектест hit-rate TP1 за 200 днів).
+Усі ціни, стопи, тейки та оцінки вже розраховані детерміновано — НЕ змінюй і НЕ вигадуй цифри.
+
+Твоє завдання — надати лаконічний професійний синтез українською мовою у форматі JSON:
+1. `macro_insight`: 2–3 речення професійного погляду на поточний режим ринку, ширину ринку та тактику розподілу капіталу.
+2. `coins`: масив об'єктів для кожної монети:
+   - `symbol`: символ монети (як у вхідних даних)
+   - `name`: повна назва проекту (напр. "Solana", "Chainlink", "Pendle")
+   - `sector`: сектор (напр. "Layer 1", "DeFi Yield", "AI & DePIN", "RWA", "Layer 2")
+   - `ai_commentary`: 2–3 чіткі речення українською: чому саме ця монета виділяється серед ринку за сукупністю факторів (RS, Order Flow, структура бази/тренду) і на що звернути увагу при виконанні угоди.
+
+Відповідь ВИКЛЮЧНО у валідному JSON:
+{
+  "macro_insight": "...",
+  "coins": [
+    {
+      "symbol": "SOL",
+      "name": "Solana",
+      "sector": "Layer 1",
+      "ai_commentary": "..."
+    }
+  ]
+}
+''';
+
+      final userPayload = jsonEncode({
+        'market_regime': report.marketRegime,
+        'btc_trend': report.btcTrend,
+        'breadth_pct': report.breadthPct,
+        'risk_per_trade_pct': report.riskPerTradePct,
+        'funnel': report.funnel,
+        'picks': enrichedOpps
+            .map((o) => {
+                  'symbol': o.symbol,
+                  'setup': o.setupType,
+                  'entry_status': o.entryStatus,
+                  'score': o.confidenceScore,
+                  'price': o.currentPrice,
+                  'trigger_price': o.triggerPrice,
+                  'tp1': o.targetPrice1,
+                  'tp2': o.targetPrice2,
+                  'sl': o.stopLoss,
+                  'blended_rr': o.blendedRR,
+                  'rs_30d_vs_btc': o.rsVsBtc30d,
+                  'rs_90d_vs_btc': o.rsVsBtc90d,
+                  'taker_delta_pp': o.takerDeltaPp,
+                  'up_down_vol': o.upDownVolumeRatio,
+                  'tp1_hit_rate_pct': o.tp1HitRatePct,
+                  'expectancy_pct': o.expectancyPct,
+                  'warnings': o.warnings,
+                })
+            .toList(),
+      });
+
+      final response = await http
+          .post(
+            Uri.parse(_groqUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': _model,
+              'messages': [
+                {'role': 'system', 'content': systemPrompt},
+                {'role': 'user', 'content': userPayload},
+              ],
+              'temperature': 0.25,
+              'max_tokens': 900,
+              'response_format': {'type': 'json_object'},
+            }),
+          )
+          .timeout(const Duration(seconds: 14));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(utf8.decode(response.bodyBytes));
         final content = data['choices']?[0]?['message']?['content']?.toString().trim();
         if (content != null && content.isNotEmpty) {
-          return report.copyWith(macroSummary: content);
+          final parsed = jsonDecode(content) as Map<String, dynamic>;
+          final macroInsight = parsed['macro_insight']?.toString().trim() ?? '';
+          final coinsList = parsed['coins'] as List<dynamic>? ?? const [];
+
+          final bySymbol = <String, Map<String, dynamic>>{};
+          for (final item in coinsList) {
+            if (item is Map<String, dynamic>) {
+              final s = item['symbol']?.toString().toUpperCase() ?? '';
+              if (s.isNotEmpty) bySymbol[s] = item;
+            }
+          }
+
+          final updatedOpps = enrichedOpps.map((opp) {
+            final aiItem = bySymbol[opp.symbol.toUpperCase()];
+            if (aiItem == null) return opp;
+            return opp.withAi(
+              name: aiItem['name']?.toString(),
+              sector: aiItem['sector']?.toString(),
+              aiCommentary: aiItem['ai_commentary']?.toString(),
+            );
+          }).toList();
+
+          final combinedMacro = macroInsight.isNotEmpty
+              ? '${report.macroSummary}\n\n🧠 Висновки AI-Аналітика: $macroInsight'
+              : report.macroSummary;
+
+          return baseWithMeta.copyWith(
+            macroSummary: combinedMacro,
+            opportunities: updatedOpps,
+          );
         }
       }
     } catch (_) {}
-    return report;
+    return baseWithMeta;
   }
 }
 

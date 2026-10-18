@@ -852,7 +852,12 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       final groq = GroqAiService(apiKey: settings.groqApiKey);
       final scanner = CryptoMarketScannerService(groqService: groq);
 
+      final portfolioVal = state.overview.totalNetWorthUsd > 0
+          ? state.overview.totalNetWorthUsd
+          : state.dcaTotals.totalValue;
+
       final report = await scanner.scanMarket(
+        portfolioValueUsd: portfolioVal,
         onProgress: (status, progress) {
           state = state.copyWith(
             scanProgressStatus: status,
