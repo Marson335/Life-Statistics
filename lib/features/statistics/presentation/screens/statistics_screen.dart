@@ -6,6 +6,7 @@ import '../../../../shared/models/models.dart';
 import '../../../tasks/presentation/screens/today_screen.dart' show taskRepositoryProvider;
 import '../../../calories/data/calories_repository.dart';
 import '../../../settings/data/settings_repository.dart';
+import '../widgets/task_execution_matrix_card.dart';
 import 'dart:math' as math;
 
 enum StatPeriod { day, week, month, year }
@@ -185,6 +186,8 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                     onTap: () => setState(() => _isTasksExpanded = !_isTasksExpanded),
                     child: Column(
                       children: [
+                        const TaskExecutionMatrixCard(),
+                        const SizedBox(height: 20),
                         _buildPieChartSection(ref, period),
                         const SizedBox(height: 24),
                         _buildPerfectDaysSection(ref, period),
