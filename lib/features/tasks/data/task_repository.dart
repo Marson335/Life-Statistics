@@ -2,10 +2,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../../core/services/notification_service.dart';
 import '../../../shared/models/models.dart';
+import '../../targets/data/target_repository.dart';
 
 class TaskRepository {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
+  final TargetRepository _targetRepo = TargetRepository();
+
+  static final Set<String> _inFlightToggles = <String>{};
+  static bool _isProcessingPenalties = false;
 
   String get _userId => _auth.currentUser!.uid;
 
@@ -22,9 +27,20 @@ class TaskRepository {
         .where('date', isLessThan: Timestamp.fromDate(end))
         .orderBy('date')
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => Task.fromMap(doc.data() as Map<String, dynamic>, doc.id))
-            .toList());
+        .map((snapshot) {
+          final tasks = <Task>[];
+          for (final doc in snapshot.docs) {
+            try {
+              final data = doc.data() as Map<String, dynamic>?;
+              if (data != null) {
+                tasks.add(Task.fromMap(data, doc.id));
+              }
+            } catch (e) {
+              print('[TaskRepository] Error parsing task ${doc.id}: $e');
+            }
+          }
+          return tasks;
+        });
   }
 
   // Get tasks for a date range (week view)
@@ -34,9 +50,56 @@ class TaskRepository {
         .where('date', isLessThan: Timestamp.fromDate(end))
         .orderBy('date')
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => Task.fromMap(doc.data() as Map<String, dynamic>, doc.id))
-            .toList());
+        .map((snapshot) {
+          final tasks = <Task>[];
+          for (final doc in snapshot.docs) {
+            try {
+              final data = doc.data() as Map<String, dynamic>?;
+              if (data != null) {
+                tasks.add(Task.fromMap(data, doc.id));
+              }
+            } catch (e) {
+              print('[TaskRepository] Error parsing task in range ${doc.id}: $e');
+            }
+          }
+          return tasks;
+        });
+  }
+
+  // Get uncompleted tasks before a specific date (overdue tasks from past 7 days)
+  Stream<List<Task>> getOverdueTasks(DateTime date) {
+    final startOfDate = DateTime(date.year, date.month, date.day);
+    final lookback = startOfDate.subtract(const Duration(days: 7));
+
+    return _tasksCollection
+        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(lookback))
+        .where('date', isLessThan: Timestamp.fromDate(startOfDate))
+        .snapshots()
+        .map((snapshot) {
+          final tasks = <Task>[];
+          for (final doc in snapshot.docs) {
+            try {
+              final data = doc.data() as Map<String, dynamic>?;
+              if (data != null) {
+                final task = Task.fromMap(data, doc.id);
+                if (task.hasCheckbox && !task.isCompleted) {
+                  tasks.add(task);
+                }
+              }
+            } catch (e) {
+              print('[TaskRepository] Error parsing overdue task ${doc.id}: $e');
+            }
+          }
+          return tasks;
+        });
+  }
+
+  // Reschedule an overdue task to today or a new date
+  Future<void> rescheduleTaskToDate(String taskId, DateTime newDate) async {
+    final normalized = DateTime(newDate.year, newDate.month, newDate.day, 12, 0);
+    await _tasksCollection.doc(taskId).update({
+      'date': Timestamp.fromDate(normalized),
+    });
   }
 
   // Add a task
@@ -86,6 +149,8 @@ class TaskRepository {
           date: DateTime(current.year, current.month, current.day,
               task.date.hour, task.date.minute),
           isCompleted: false,
+          appliedTargetPoints: const {},
+          targetPenaltyProcessed: false,
         );
         batch.set(docRef, instance.toMap());
         batchCount++;
@@ -110,30 +175,134 @@ class TaskRepository {
 
   // Update task
   Future<void> updateTask(Task task) async {
-    await _tasksCollection.doc(task.id).update(task.toMap());
+    var taskToSave = task;
+
+    // Якщо задачу на сьогодні вже виконано і змінили прив'язку до Таргетів — перераховуємо очки
+    if (task.hasCheckbox &&
+        task.isCompleted &&
+        (task.targetPoints.isNotEmpty || task.appliedTargetPoints.isNotEmpty)) {
+      int streak = 1;
+      if (task.type == TaskType.green && task.groupId != null) {
+        final s = await calculateTaskStreak(task.groupId!, task.date);
+        streak = s.streak > 0 ? s.streak : 1;
+      }
+      final updatedApplied = await _targetRepo.applyTaskCompletionToTargets(
+        task: task,
+        isCompleted: true,
+        streakDays: streak,
+      );
+      taskToSave = task.copyWith(appliedTargetPoints: updatedApplied);
+    }
+
+    await _tasksCollection.doc(taskToSave.id).update(taskToSave.toMap());
     
-    if (task.reminderTime != null) {
-      await NotificationService().scheduleTaskReminder(task);
+    if (taskToSave.reminderTime != null) {
+      await NotificationService().scheduleTaskReminder(taskToSave);
     } else {
-      await NotificationService().cancelTaskReminder(task.id);
+      await NotificationService().cancelTaskReminder(taskToSave.id);
     }
   }
 
   // Toggle task completion
   Future<void> toggleTaskCompletion(String taskId, bool isCompleted) async {
-    await _tasksCollection.doc(taskId).update({'isCompleted': isCompleted});
-    if (isCompleted) {
-      await NotificationService().cancelTaskReminder(taskId);
-    } else {
-      try {
-        final doc = await _tasksCollection.doc(taskId).get();
-        if (doc.exists) {
-          final task = Task.fromMap(doc.data() as Map<String, dynamic>, doc.id);
-          if (task.reminderTime != null && task.reminderTime!.isNotEmpty) {
-            await NotificationService().scheduleTaskReminder(task);
-          }
+    if (_inFlightToggles.contains(taskId)) return;
+    _inFlightToggles.add(taskId);
+
+    try {
+      await _tasksCollection.doc(taskId).update({'isCompleted': isCompleted});
+
+      final doc = await _tasksCollection.doc(taskId).get();
+      if (doc.exists && doc.data() != null) {
+        final task = Task.fromMap(doc.data() as Map<String, dynamic>, doc.id);
+
+        if (isCompleted) {
+          await NotificationService().cancelTaskReminder(taskId);
+        } else if (task.reminderTime != null && task.reminderTime!.isNotEmpty) {
+          await NotificationService().scheduleTaskReminder(task);
         }
-      } catch (_) {}
+
+        if (task.targetPoints.isNotEmpty || task.appliedTargetPoints.isNotEmpty) {
+          int streakDays = 1;
+          if (isCompleted && task.type == TaskType.green && task.groupId != null) {
+            final streakInfo = await calculateTaskStreak(task.groupId!, task.date);
+            streakDays = streakInfo.streak > 0 ? streakInfo.streak : 1;
+          }
+
+          final newApplied = await _targetRepo.applyTaskCompletionToTargets(
+            task: task,
+            isCompleted: isCompleted,
+            streakDays: streakDays,
+          );
+
+          await _tasksCollection.doc(taskId).update({
+            'appliedTargetPoints': newApplied,
+          });
+        }
+      }
+    } catch (e) {
+      print('[TaskRepository] Error in toggleTaskCompletion: $e');
+    } finally {
+      _inFlightToggles.remove(taskId);
+    }
+  }
+
+  /// Перевіряє пропущені задачі минулих днів (режим NO EXCUSES) і списує авто-штраф у Таргети.
+  Future<void> processMissedTaskPenalties() async {
+    if (_auth.currentUser == null || _isProcessingPenalties) return;
+    _isProcessingPenalties = true;
+
+    try {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final lookback = today.subtract(const Duration(days: 14));
+
+      final snapshot = await _tasksCollection
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(lookback))
+          .where('date', isLessThan: Timestamp.fromDate(today))
+          .get();
+
+      final missedTasks = <Task>[];
+      for (final doc in snapshot.docs) {
+        try {
+          final data = doc.data() as Map<String, dynamic>?;
+          if (data == null) continue;
+          final task = Task.fromMap(data, doc.id);
+          if (task.hasCheckbox &&
+              !task.isCompleted &&
+              !task.targetPenaltyProcessed &&
+              task.targetPoints.isNotEmpty &&
+              task.appliedTargetPoints.isEmpty) {
+            missedTasks.add(task);
+          }
+        } catch (_) {}
+      }
+
+      if (missedTasks.isEmpty) return;
+
+      // Сортуємо хронологічно від старіших до новіших
+      missedTasks.sort((a, b) => a.date.compareTo(b.date));
+
+      for (final task in missedTasks) {
+        int antiStreakDays = 1;
+        if (task.type == TaskType.green && task.groupId != null) {
+          final streakInfo = await calculateTaskStreak(task.groupId!, task.date);
+          antiStreakDays = streakInfo.antiStreak > 0 ? streakInfo.antiStreak : 1;
+        }
+
+        final appliedPenalty = await _targetRepo.applyMissedTaskPenalty(
+          task: task,
+          antiStreakDays: antiStreakDays,
+        );
+
+        await _tasksCollection.doc(task.id).update({
+          'appliedTargetPoints': appliedPenalty,
+          'targetPenaltyProcessed': true,
+        });
+      }
+    } catch (e) {
+      print('[TaskRepository] Error in processMissedTaskPenalties: $e');
+    } finally {
+      _isProcessingPenalties = false;
     }
   }
 
@@ -164,12 +333,35 @@ class TaskRepository {
 
   // Delete task
   Future<void> deleteTask(String taskId) async {
+    try {
+      final existing = await getTaskById(taskId);
+      if (existing != null && existing.appliedTargetPoints.isNotEmpty) {
+        final now = DateTime.now();
+        final today = DateTime(now.year, now.month, now.day);
+        final taskDay = DateTime(existing.date.year, existing.date.month, existing.date.day);
+        // Якщо видаляється сьогоднішня задача, по якій щойно поставили галочку — відкочуємо очки
+        if (taskDay.isAtSameMomentAs(today) && existing.isCompleted) {
+          await _targetRepo.applyTaskCompletionToTargets(
+            task: existing,
+            isCompleted: false,
+            streakDays: 1,
+          );
+        }
+      }
+    } catch (_) {}
+
     await _tasksCollection.doc(taskId).delete();
     await NotificationService().cancelTaskReminder(taskId);
   }
 
   // Delete all instances of a green task from a specific date onwards
-  Future<void> deleteAllGreenTaskInstances(String groupId, DateTime fromDate) async {
+  Future<void> deleteAllGreenTaskInstances(String groupId, DateTime fromDate, {String? currentTaskId}) async {
+    if (currentTaskId != null) {
+      try {
+        await _tasksCollection.doc(currentTaskId).delete();
+      } catch (_) {}
+    }
+
     final normalizedDate = DateTime(fromDate.year, fromDate.month, fromDate.day);
     
     final snapshot = await _tasksCollection
@@ -177,13 +369,56 @@ class TaskRepository {
         .get();
 
     final batch = _firestore.batch();
+    int count = 0;
     for (final doc in snapshot.docs) {
-      final taskDate = (doc.data() as Map<String, dynamic>)['date'].toDate();
-      if (!taskDate.isBefore(normalizedDate)) {
+      final data = doc.data() as Map<String, dynamic>?;
+      if (data == null) continue;
+      final rawDate = data['date'];
+      DateTime? taskDate;
+      if (rawDate is Timestamp) {
+        taskDate = rawDate.toDate();
+      } else if (rawDate is String) {
+        taskDate = DateTime.tryParse(rawDate);
+      }
+      if (taskDate == null || !taskDate.isBefore(normalizedDate)) {
         batch.delete(doc.reference);
+        count++;
       }
     }
-    await batch.commit();
+    if (count > 0) {
+      await batch.commit();
+    }
+    await NotificationService().cancelTaskReminder(groupId);
+  }
+
+  // Delete all instances of a green task (entire series, all dates)
+  Future<void> deleteEntireGreenTaskSeries(String groupId, {String? taskTitle}) async {
+    final snapshot = await _tasksCollection
+        .where('groupId', isEqualTo: groupId)
+        .get();
+
+    final batch = _firestore.batch();
+    int count = 0;
+    for (final doc in snapshot.docs) {
+      batch.delete(doc.reference);
+      count++;
+    }
+
+    if (taskTitle != null && taskTitle.trim().isNotEmpty) {
+      try {
+        final titleSnapshot = await _tasksCollection
+            .where('title', isEqualTo: taskTitle.trim())
+            .get();
+        for (final doc in titleSnapshot.docs) {
+          batch.delete(doc.reference);
+          count++;
+        }
+      } catch (_) {}
+    }
+
+    if (count > 0) {
+      await batch.commit();
+    }
     await NotificationService().cancelTaskReminder(groupId);
   }
 
@@ -199,6 +434,8 @@ class TaskRepository {
     final updateMap = updatedTask.toMap();
     updateMap.remove('date');
     updateMap.remove('isCompleted');
+    updateMap.remove('appliedTargetPoints');
+    updateMap.remove('targetPenaltyProcessed');
     
     for (final doc in snapshot.docs) {
       final taskDate = (doc.data() as Map<String, dynamic>)['date'].toDate();
@@ -207,6 +444,24 @@ class TaskRepository {
       }
     }
     await batch.commit();
+
+    // Якщо поточний екземпляр задачі вже виконаний сьогодні — синхронізуємо очки в Таргети
+    if (updatedTask.isCompleted &&
+        (updatedTask.targetPoints.isNotEmpty || updatedTask.appliedTargetPoints.isNotEmpty)) {
+      int streak = 1;
+      if (updatedTask.groupId != null) {
+        final s = await calculateTaskStreak(updatedTask.groupId!, updatedTask.date);
+        streak = s.streak > 0 ? s.streak : 1;
+      }
+      final newApplied = await _targetRepo.applyTaskCompletionToTargets(
+        task: updatedTask,
+        isCompleted: true,
+        streakDays: streak,
+      );
+      await _tasksCollection.doc(updatedTask.id).update({
+        'appliedTargetPoints': newApplied,
+      });
+    }
 
     if (updatedTask.reminderTime != null) {
       await NotificationService().scheduleTaskReminder(updatedTask);

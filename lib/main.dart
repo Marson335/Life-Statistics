@@ -10,10 +10,12 @@ import 'core/theme/app_theme.dart';
 import 'core/services/notification_service.dart';
 import 'features/auth/presentation/login_screen.dart';
 import 'features/tasks/presentation/screens/today_screen.dart';
+import 'features/targets/presentation/screens/targets_screen.dart';
 import 'features/statistics/presentation/screens/statistics_screen.dart';
 import 'features/calories/presentation/screens/calories_screen.dart';
 import 'features/settings/presentation/screens/settings_screen.dart';
 import 'features/crypto/presentation/screens/crypto_screen.dart';
+import 'features/crypto/data/crypto_alert_service.dart';
 import 'features/tasks/data/notification_expense_service.dart';
 import 'shared/widgets/main_scaffold.dart';
 
@@ -21,6 +23,7 @@ void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   await NotificationService().init();
+  await CryptoAlertService().init();
   NotificationExpenseService().startListening();
   runApp(const ProviderScope(child: LifeStatisticsApp()));
 }
@@ -41,6 +44,9 @@ final _router = GoRouter(
       builder: (ctx, state, child) => MainScaffold(child: child),
       routes: [
         GoRoute(path: '/', builder: (ctx, state) => const TodayScreen()),
+        GoRoute(
+            path: '/targets',
+            builder: (ctx, state) => const TargetsScreen()),
         GoRoute(
             path: '/statistics',
             builder: (ctx, state) => const StatisticsScreen()),
@@ -64,7 +70,7 @@ class LifeStatisticsApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return MaterialApp.router(
-      title: 'Life Statistics',
+      title: 'LifeStatistic',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.darkTheme,
       routerConfig: _router,

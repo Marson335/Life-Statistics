@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import '../../data/ai_nutrition_service.dart';
@@ -13,7 +15,43 @@ final selectedDateProvider = StateProvider<DateTime>((ref) {
   return DateTime(now.year, now.month, now.day);
 });
 
-class CaloriesScreen extends ConsumerWidget {
+class CaloriesScreen extends ConsumerStatefulWidget {
+  const CaloriesScreen({super.key});
+
+  @override
+  ConsumerState<CaloriesScreen> createState() => _CaloriesScreenState();
+}
+
+class _CaloriesScreenState extends ConsumerState<CaloriesScreen> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      ref.read(selectedDateProvider.notifier).state = today;
+    });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final currentSelected = ref.read(selectedDateProvider);
+      if (currentSelected.isBefore(today)) {
+        ref.read(selectedDateProvider.notifier).state = today;
+      }
+    }
+  }
+
   Future<void> _takeFoodPhoto(BuildContext context, WidgetRef ref, DateTime date) async {
     final aiService = ref.read(aiNutritionServiceProvider);
     if (aiService == null) {
@@ -152,11 +190,12 @@ class CaloriesScreen extends ConsumerWidget {
                 child: ElevatedButton(
                   onPressed: () => Navigator.pop(ctx),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF9C27B0),
+                    backgroundColor: AppColors.accent,
+                    foregroundColor: Colors.black,
                     padding: const EdgeInsets.symmetric(vertical: 16),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                   ),
-                  child: const Text('Готово', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  child: const Text('Готово', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                 ),
               ),
             ],
@@ -165,8 +204,6 @@ class CaloriesScreen extends ConsumerWidget {
       },
     );
   }
-
-  const CaloriesScreen({super.key});
 
   void _showAddMacrosSheet(BuildContext context, WidgetRef ref, DateTime date) {
     final caloriesCtrl = TextEditingController();
@@ -241,10 +278,11 @@ class CaloriesScreen extends ConsumerWidget {
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.black,
                   padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
-                child: const Text('Додати', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                child: const Text('Додати', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
               ),
             ),
             const SizedBox(height: 20),
@@ -269,42 +307,70 @@ class CaloriesScreen extends ConsumerWidget {
   }
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final date = ref.watch(selectedDateProvider);
     final macrosAsync = ref.watch(dailyMacrosProvider(date));
     final settingsAsync = ref.watch(settingsProvider);
 
+    final now = DateTime.now();
+    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
+    final dateStr = isToday
+        ? 'СЬОГОДНІ'
+        : "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}";
+
     return Scaffold(
       backgroundColor: AppColors.background,
-      floatingActionButton: FloatingActionButton(
-        onPressed: () => _takeFoodPhoto(context, ref, date),
-        backgroundColor: AppColors.accent,
-        child: const Icon(Icons.camera_alt_rounded, color: Colors.white),
-      ),
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Калорії',
-          style: TextStyle(color: AppColors.textPrimary, fontSize: 22, fontWeight: FontWeight.bold),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'NUTRITION FUEL // $dateStr',
+              style: GoogleFonts.chakraPetch(
+                color: AppColors.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+              ),
+            ),
+            Text(
+              'ХАРЧУВАННЯ & FUEL',
+              style: GoogleFonts.chakraPetch(
+                color: AppColors.textPrimary,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: AppColors.textSecondary, size: 22),
+            tooltip: 'Налаштування',
+            onPressed: () => context.go('/settings'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: SafeArea(
         child: Column(
           children: [
             _buildDateSelector(ref, date),
-            const SizedBox(height: 20),
+            const SizedBox(height: 12),
             Expanded(
               child: macrosAsync.when(
                 data: (macros) {
                   return settingsAsync.when(
                     data: (settings) => _buildDashboard(context, ref, macros, settings, date),
-                    loading: () => const Center(child: CircularProgressIndicator()),
-                    error: (e, _) => Center(child: Text('Помилка налаштувань', style: const TextStyle(color: Colors.red))),
+                    loading: () => const Center(child: CircularProgressIndicator(color: AppColors.accent)),
+                    error: (e, _) => Center(child: Text('Помилка налаштувань', style: GoogleFonts.chakraPetch(color: Colors.red))),
                   );
                 },
-                loading: () => const Center(child: CircularProgressIndicator()),
-                error: (e, _) => Center(child: Text('Помилка: $e', style: const TextStyle(color: Colors.red))),
+                loading: () => const Center(child: CircularProgressIndicator(color: AppColors.accent)),
+                error: (e, _) => Center(child: Text('Помилка: $e', style: GoogleFonts.chakraPetch(color: Colors.red))),
               ),
             ),
           ],
@@ -315,117 +381,406 @@ class CaloriesScreen extends ConsumerWidget {
 
   Widget _buildDateSelector(WidgetRef ref, DateTime date) {
     final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final isToday = date.isAtSameMomentAs(today);
+    final isToday = date.year == now.year && date.month == now.month && date.day == now.day;
 
     String dateText = isToday
-        ? 'Сьогодні'
+        ? 'СЬОГОДНІ'
         : "${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}";
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left_rounded, color: AppColors.textPrimary),
-            onPressed: () {
-              ref.read(selectedDateProvider.notifier).state = date.subtract(const Duration(days: 1));
-            },
-          ),
-          Text(
-            dateText,
-            style: const TextStyle(color: AppColors.textPrimary, fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right_rounded, color: AppColors.textPrimary),
-            onPressed: isToday
-                ? null
-                : () {
-                    ref.read(selectedDateProvider.notifier).state = date.add(const Duration(days: 1));
-                  },
-          ),
-        ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.accent.withAlpha(160), width: 1.5),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              icon: const Icon(Icons.chevron_left_rounded, color: AppColors.accent, size: 24),
+              onPressed: () {
+                final prev = DateTime(date.year, date.month, date.day - 1);
+                ref.read(selectedDateProvider.notifier).state = prev;
+              },
+            ),
+            Expanded(
+              child: Text(
+                isToday ? '< $dateText // TODAY >' : '< $dateText >',
+                textAlign: TextAlign.center,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: GoogleFonts.chakraPetch(
+                  color: AppColors.accent,
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.chevron_right_rounded, color: AppColors.accent, size: 24),
+              onPressed: isToday
+                  ? null
+                  : () {
+                      final next = DateTime(date.year, date.month, date.day + 1);
+                      ref.read(selectedDateProvider.notifier).state = next;
+                    },
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildDashboard(BuildContext context, WidgetRef ref, DailyMacros macros, UserSettings settings, DateTime date) {
+    final int currentKcal = macros.calories;
+    final int targetKcal = settings.targetCalories > 0 ? settings.targetCalories : 2400;
+    final int remainingKcal = targetKcal - currentKcal;
+    final double kcalRatio = (currentKcal / targetKcal).clamp(0.0, 1.0);
+    final int diffPercent = (((currentKcal - targetKcal) / targetKcal) * 100).round();
+    final String deficitText = diffPercent <= 0
+        ? 'ДЕФІЦИТ: $diffPercent% // ЧИСТИЙ РІСТ ТІЛА'
+        : 'ПРОФІЦИТ: +$diffPercent% // НАБІР МАСИ';
+
     return ListView(
       padding: const EdgeInsets.symmetric(horizontal: 20),
       children: [
-        _buildMainRing(macros.calories, settings.targetCalories),
-        const SizedBox(height: 40),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            _buildSmallRing('Білки', macros.protein, settings.targetProtein, AppColors.blueTask),
-            _buildSmallRing('Жири', macros.fats, settings.targetFats, AppColors.yellowTask),
-            _buildSmallRing('Вуглеводи', macros.carbs, settings.targetCarbs, AppColors.greenTask),
-          ],
-        ),
-        const SizedBox(height: 40),
-        ElevatedButton.icon(
-          onPressed: () => _showAddMacrosSheet(context, ref, date),
-          icon: const Icon(Icons.add_rounded, color: Colors.white),
-          label: const Text('Додати прийом', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.accent,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        // Card 1: Calorie Big Gauge Card (Style 3)
+        Container(
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.accent.withAlpha(180), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(90),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ),
-        const SizedBox(height: 28),
-        Row(
-          children: [
-            const Icon(Icons.restaurant_rounded, color: AppColors.accent, size: 20),
-            const SizedBox(width: 8),
-            const Text(
-              'Прийоми їжі за день',
-              style: TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(11),
+            child: IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(width: 5, color: AppColors.accent),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'ДЕННА ЕНЕРГІЯ // ККАЛ',
+                            style: GoogleFonts.chakraPetch(
+                              color: AppColors.accent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Row(
+                            children: [
+                              // Circular Gauge
+                              SizedBox(
+                                width: 90,
+                                height: 90,
+                                child: Stack(
+                                  alignment: Alignment.center,
+                                  children: [
+                                    CircularProgressIndicator(
+                                      value: kcalRatio,
+                                      strokeWidth: 9,
+                                      backgroundColor: const Color(0xFF20242E),
+                                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
+                                    ),
+                                    Column(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          '$currentKcal',
+                                          style: GoogleFonts.chakraPetch(
+                                            color: Colors.white,
+                                            fontSize: 17,
+                                            fontWeight: FontWeight.w900,
+                                          ),
+                                        ),
+                                        Text(
+                                          'ККАЛ',
+                                          style: GoogleFonts.chakraPetch(
+                                            color: AppColors.accent,
+                                            fontSize: 9,
+                                            fontWeight: FontWeight.w800,
+                                            letterSpacing: 0.6,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 18),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '$currentKcal / $targetKcal ККАЛ',
+                                      style: GoogleFonts.chakraPetch(
+                                        color: Colors.white,
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w900,
+                                        letterSpacing: 0.4,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      remainingKcal >= 0
+                                          ? 'ЗАЛИШИЛОСЬ: $remainingKcal ККАЛ'
+                                          : 'ПЕРЕВИЩЕНО НА: ${remainingKcal.abs()} ККАЛ',
+                                      style: GoogleFonts.chakraPetch(
+                                        color: AppColors.accent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      deficitText,
+                                      style: GoogleFonts.chakraPetch(
+                                        color: const Color(0xFFA0AAB9),
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      'РЕЖИМ: [ATHLETE NUTRITION]',
+                                      style: GoogleFonts.chakraPetch(
+                                        color: Colors.white70,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w600,
+                                        letterSpacing: 0.5,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            const Spacer(),
-            if (macros.meals.isNotEmpty)
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Card 2: Macro Blocks (Style 3)
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.border, width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
               Text(
-                '${macros.meals.length} ${macros.meals.length == 1 ? "прийом" : "прийоми"}',
-                style: const TextStyle(color: AppColors.textSecondary, fontSize: 13),
+                'РОЗПОДІЛ МАКРОНУТРІЄНТІВ (Б / Ж / В)',
+                style: GoogleFonts.chakraPetch(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
               ),
+              const SizedBox(height: 16),
+              _buildMacroProgressRow(
+                'БІЛОК (PROTEIN)',
+                macros.protein,
+                settings.targetProtein > 0 ? settings.targetProtein : 160,
+                AppColors.accent,
+              ),
+              const SizedBox(height: 14),
+              _buildMacroProgressRow(
+                'ЖИРИ (FATS)',
+                macros.fats,
+                settings.targetFats > 0 ? settings.targetFats : 70,
+                const Color(0xFFC8CDDC),
+              ),
+              const SizedBox(height: 14),
+              _buildMacroProgressRow(
+                'ВУГЛЕВОДИ (CARBS)',
+                macros.carbs,
+                settings.targetCarbs > 0 ? settings.targetCarbs : 280,
+                Colors.white,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 16),
+
+        // Buttons: + ДОДАТИ ПРИЙОМ & AI СКАНЕР ЇЖІ (side-by-side Style 3)
+        Row(
+          children: [
+            Expanded(
+              child: ElevatedButton(
+                onPressed: () => _showAddMacrosSheet(context, ref, date),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.black,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  elevation: 4,
+                ),
+                child: Text(
+                  '+ ДОДАТИ ПРИЙОМ',
+                  style: GoogleFonts.chakraPetch(
+                    color: Colors.black,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ElevatedButton.icon(
+                onPressed: () => _takeFoodPhoto(context, ref, date),
+                icon: const Icon(Icons.camera_alt_rounded, color: AppColors.accent, size: 18),
+                label: Text(
+                  'AI СКАНЕР ЇЖІ',
+                  style: GoogleFonts.chakraPetch(
+                    color: AppColors.accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.6,
+                  ),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.surface,
+                  foregroundColor: AppColors.accent,
+                  padding: const EdgeInsets.symmetric(vertical: 14),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(10),
+                    side: const BorderSide(color: AppColors.accent, width: 1.5),
+                  ),
+                  elevation: 0,
+                ),
+              ),
+            ),
           ],
         ),
+        const SizedBox(height: 24),
+
+        // Meal Logs Section Header
+        Text(
+          '[ ІСТОРІЯ ПРИЙОМІВ ХАРЧУВАННЯ ]',
+          style: GoogleFonts.chakraPetch(
+            color: AppColors.accent,
+            fontSize: 13,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+          ),
+        ),
         const SizedBox(height: 12),
+
         if (macros.meals.isEmpty)
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
             decoration: BoxDecoration(
               color: AppColors.surface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppColors.border),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border, width: 1.5),
             ),
             child: Column(
               children: [
                 Icon(Icons.no_meals_rounded, size: 36, color: AppColors.textSecondary.withAlpha(120)),
                 const SizedBox(height: 8),
-                const Text(
+                Text(
                   'Ще немає записів про їжу за цей день',
-                  style: TextStyle(color: AppColors.textPrimary, fontSize: 14, fontWeight: FontWeight.w600),
+                  style: GoogleFonts.chakraPetch(color: AppColors.textPrimary, fontSize: 13, fontWeight: FontWeight.w700),
                 ),
                 const SizedBox(height: 4),
-                const Text(
-                  'Сфотографуйте їжу на камеру (кнопка внизу) або додайте вручну!',
+                Text(
+                  'Натисніть "+ ДОДАТИ ПРИЙОМ" або "AI СКАНЕР ЇЖІ" вище!',
                   textAlign: TextAlign.center,
-                  style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                  style: GoogleFonts.chakraPetch(color: AppColors.textSecondary, fontSize: 11),
                 ),
               ],
             ),
           )
         else
           ...macros.meals.reversed.map((meal) => _buildMealCard(context, ref, date, meal)),
-        const SizedBox(height: 80),
+        const SizedBox(height: 40),
+      ],
+    );
+  }
+
+  Widget _buildMacroProgressRow(String title, int current, int target, Color barColor) {
+    final double ratio = target > 0 ? (current / target).clamp(0.0, 1.0) : 0.0;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: GoogleFonts.chakraPetch(
+                  color: const Color(0xFFDCDEE7),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.5,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              '$current / $target г',
+              style: GoogleFonts.chakraPetch(
+                color: barColor,
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                letterSpacing: 0.4,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        Container(
+          height: 8,
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: const Color(0xFF0C0D10),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: FractionallySizedBox(
+            alignment: Alignment.centerLeft,
+            widthFactor: ratio,
+            child: Container(
+              decoration: BoxDecoration(
+                color: barColor,
+                borderRadius: BorderRadius.circular(4),
+              ),
+            ),
+          ),
+        ),
       ],
     );
   }
@@ -434,195 +789,117 @@ class CaloriesScreen extends ConsumerWidget {
     final timeStr = "${meal.timestamp.hour.toString().padLeft(2, '0')}:${meal.timestamp.minute.toString().padLeft(2, '0')}";
     
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
+      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.accent.withAlpha(15),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: Stack(
           children: [
-            Row(
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: AppColors.accent.withAlpha(30),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(Icons.lunch_dining_rounded, color: AppColors.accent, size: 20),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            const Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 4,
+              child: ColoredBox(color: AppColors.accent),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
                     children: [
-                      Text(
-                        'Прийом їжі о $timeStr',
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '🔥 ${meal.calories} ккал  |  Б: ${meal.protein}г  Ж: ${meal.fats}г  В: ${meal.carbs}г',
-                        style: const TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete_outline_rounded, color: AppColors.redTask, size: 20),
-                  tooltip: 'Видалити прийом',
-                  onPressed: () {
-                    showDialog(
-                      context: context,
-                      builder: (dCtx) => AlertDialog(
-                        backgroundColor: AppColors.surface,
-                        title: const Text('Видалити прийом їжі?', style: TextStyle(color: AppColors.textPrimary)),
-                        content: const Text(
-                          'Калорії та макронутрієнти цього прийому будуть відраховані від вашого дня.',
-                          style: TextStyle(color: AppColors.textSecondary),
-                        ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.pop(dCtx),
-                            child: const Text('Скасувати', style: TextStyle(color: AppColors.textSecondary)),
+                      Expanded(
+                        child: Text(
+                          'ПРИЙОМ ЇЖІ  •  $timeStr',
+                          overflow: TextOverflow.ellipsis,
+                          maxLines: 1,
+                          style: GoogleFonts.chakraPetch(
+                            color: AppColors.accent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
                           ),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: AppColors.redTask),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            '${meal.calories} ккал',
+                            style: GoogleFonts.chakraPetch(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          IconButton(
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                            icon: const Icon(Icons.delete_outline_rounded, color: AppColors.redTask, size: 18),
+                            tooltip: 'Видалити прийом',
                             onPressed: () {
-                              ref.read(caloriesRepositoryProvider).deleteMeal(date, meal);
-                              Navigator.pop(dCtx);
+                              showDialog(
+                                context: context,
+                                builder: (dCtx) => AlertDialog(
+                                  backgroundColor: AppColors.surface,
+                                  title: Text('Видалити прийом їжі?', style: GoogleFonts.chakraPetch(color: AppColors.textPrimary)),
+                                  content: Text(
+                                    'Калорії та макронутрієнти цього прийому будуть відраховані від вашого дня.',
+                                    style: GoogleFonts.chakraPetch(color: AppColors.textSecondary),
+                                  ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.pop(dCtx),
+                                      child: Text('Скасувати', style: GoogleFonts.chakraPetch(color: AppColors.textSecondary)),
+                                    ),
+                                    ElevatedButton(
+                                      style: ElevatedButton.styleFrom(backgroundColor: AppColors.redTask),
+                                      onPressed: () {
+                                        ref.read(caloriesRepositoryProvider).deleteMeal(date, meal);
+                                        Navigator.pop(dCtx);
+                                      },
+                                      child: Text('Видалити', style: GoogleFonts.chakraPetch(color: Colors.white, fontWeight: FontWeight.bold)),
+                                    ),
+                                  ],
+                                ),
+                              );
                             },
-                            child: const Text('Видалити', style: TextStyle(color: Colors.white)),
                           ),
                         ],
                       ),
-                    );
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            const Divider(color: AppColors.border, height: 1),
-            const SizedBox(height: 12),
-            SelectableText(
-              meal.text.trim(),
-              style: const TextStyle(
-                color: AppColors.textPrimary,
-                fontSize: 13,
-                height: 1.5,
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    meal.text.trim(),
+                    style: GoogleFonts.chakraPetch(
+                      color: const Color(0xFFF0F5FF),
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Б: ${meal.protein}г  •  Ж: ${meal.fats}г  •  В: ${meal.carbs}г',
+                    style: GoogleFonts.chakraPetch(
+                      color: const Color(0xFF96A0AF),
+                      fontSize: 11,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
       ),
-    );
-  }
-
-  Widget _buildMainRing(int current, int target) {
-    double progress = target > 0 ? current / target : 0.0;
-    if (progress > 1.0) progress = 1.0;
-
-    return Center(
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          SizedBox(
-            width: 200,
-            height: 200,
-            child: TweenAnimationBuilder<double>(
-              tween: Tween<double>(begin: 0, end: progress),
-              duration: const Duration(milliseconds: 1000),
-              curve: Curves.easeOutCubic,
-              builder: (context, value, _) {
-                return CircularProgressIndicator(
-                  value: value,
-                  strokeWidth: 16,
-                  backgroundColor: AppColors.surface,
-                  valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
-                  strokeCap: StrokeCap.round,
-                );
-              },
-            ),
-          ),
-          Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text('Калорії', style: TextStyle(color: AppColors.textSecondary, fontSize: 16)),
-              const SizedBox(height: 4),
-              Text(
-                '$current',
-                style: const TextStyle(color: AppColors.textPrimary, fontSize: 40, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 4),
-              Text('із $target', style: const TextStyle(color: AppColors.textSecondary, fontSize: 16)),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSmallRing(String label, int current, int target, Color color) {
-    double progress = target > 0 ? current / target : 0.0;
-    if (progress > 1.0) progress = 1.0;
-
-    return Column(
-      children: [
-        Stack(
-          alignment: Alignment.center,
-          children: [
-            SizedBox(
-              width: 80,
-              height: 80,
-              child: TweenAnimationBuilder<double>(
-                tween: Tween<double>(begin: 0, end: progress),
-                duration: const Duration(milliseconds: 1000),
-                curve: Curves.easeOutCubic,
-                builder: (context, value, _) {
-                  return CircularProgressIndicator(
-                    value: value,
-                    strokeWidth: 8,
-                    backgroundColor: AppColors.surface,
-                    valueColor: AlwaysStoppedAnimation<Color>(color),
-                    strokeCap: StrokeCap.round,
-                  );
-                },
-              ),
-            ),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$current',
-                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Text(label, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
-        Text('із $target', style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-      ],
     );
   }
 }

@@ -770,11 +770,11 @@ class GroqAiService {
   }
 
   String _fmtPrice(double val) {
-    if (val >= 1000) return val.toStringAsFixed(2);
-    if (val >= 1) return val.toStringAsFixed(2);
-    if (val >= 0.01) return val.toStringAsFixed(4);
-    if (val > 0) return val.toStringAsFixed(6);
-    return '0.00';
+    if (val == 0) return '0.0000';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 0.0001) return '$sign${abs.toStringAsFixed(4)}';
+    return '$sign${abs.toStringAsFixed(6)}';
   }
 
   /// Мультиагентний AI-аналіз кандидатів для формування звіту «AI-Радар»
@@ -1224,5 +1224,119 @@ class GroqAiService {
     } catch (_) {}
     return baseWithMeta;
   }
+
+  /// Інституційне збагачення фундаментального аналізу Layer-1 монет (BTC, ETH, SOL, BNB, XRP, SUI, TON, AVAX, ADA, TRX)
+  Future<FundamentalAnalysisReport> enrichFundamentalReport(
+    FundamentalAnalysisReport report,
+  ) async {
+    if (!isConfigured || report.coins.isEmpty) {
+      return report;
+    }
+
+    try {
+      const systemPrompt = '''
+Ти — Головний Макро-Стратег та Керуючий Портфелем базових криптовалют першого рівня (Layer-1 Core: BTC, ETH, SOL, BNB, XRP, SUI, TON, AVAX, ADA, TRX).
+Твоє завдання — проаналізувати 365-денні інституційні метрики кожної фундаментальної монети (Mayer Multiple, MVRV-проксі по 365D VWAP, 365D Volume Profile POC, Денний та Тижневий RSI, Taker Buy Delta) і надати короткий, чіткий та професійний коментар українською мовою: КОЛИ і ПО ЯКІЙ ЦІНІ варто ЗАКУПАТИ (акумулювати), а КОЛИ і ПО ЯКІЙ ЦІНІ варто ПРОДАВАТИ (фіксувати прибуток).
+
+ПОВЕРНИ ТІЛЬКИ ВАЛІДНИЙ JSON-ОБ'ЄКТ:
+{
+  "macro_insight": "2-3 речення глибокого макро-висновку про фазу циклу Bitcoin, перетік капіталу в ETH/SOL та оптимальну частку кешу",
+  "coins": [
+    {
+      "symbol": "BTC",
+      "ai_commentary": "2-3 змістовні речення українською: оцінка поточної ціни відносно собівартості (VWAP 365D / POC), чітка порада чи купувати зараз чи чекати лімітні рівні, та де фіксувати прибуток."
+    }
+  ]
 }
+Не використовуй markdown-обгортки навколо JSON. Пиши живою, професійною українською мовою.
+''';
+
+      final userPayload = jsonEncode({
+        'market_cycle': report.marketCycleLabel,
+        'btc_mayer': report.btcMayerMultiple,
+        'btc_mvrv_proxy': report.btcMvrvProxy,
+        'eth_btc_status': report.ethBtcStatus,
+        'sol_btc_status': report.solBtcStatus,
+        'coins': report.coins
+            .map((c) => {
+                  'symbol': c.symbol,
+                  'price': c.currentPrice,
+                  'cycle_phase': c.cyclePhase,
+                  'accumulation_score': c.accumulationScore,
+                  'sell_pressure_score': c.sellPressureScore,
+                  'mayer_multiple': double.parse(c.mayerMultiple.toStringAsFixed(2)),
+                  'mvrv_proxy': double.parse(c.mvrvProxy.toStringAsFixed(2)),
+                  'vwap_365d': c.vwap365,
+                  'poc_365d': c.poc365,
+                  'rsi_1d': double.parse(c.rsi14d.toStringAsFixed(1)),
+                  'rsi_1w': double.parse(c.rsi14w.toStringAsFixed(1)),
+                  'buy_zone_1': c.buyZone1Price,
+                  'buy_zone_2': c.buyZone2Price,
+                  'tp_1': c.tp1Price,
+                  'tp_2': c.tp2Price,
+                })
+            .toList(),
+      });
+
+      final response = await http
+          .post(
+            Uri.parse(_groqUrl),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $apiKey',
+            },
+            body: jsonEncode({
+              'model': _model,
+              'messages': [
+                {'role': 'system', 'content': systemPrompt},
+                {'role': 'user', 'content': userPayload},
+              ],
+              'temperature': 0.25,
+              'max_tokens': 1000,
+              'response_format': {'type': 'json_object'},
+            }),
+          )
+          .timeout(const Duration(seconds: 14));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(utf8.decode(response.bodyBytes));
+        final content = data['choices']?[0]?['message']?['content']?.toString().trim();
+        if (content != null && content.isNotEmpty) {
+          final parsed = jsonDecode(content) as Map<String, dynamic>;
+          final macroInsight = parsed['macro_insight']?.toString().trim() ?? '';
+          final coinsList = parsed['coins'] as List<dynamic>? ?? const [];
+
+          final bySymbol = <String, String>{};
+          for (final item in coinsList) {
+            if (item is Map<String, dynamic>) {
+              final s = item['symbol']?.toString().toUpperCase() ?? '';
+              final comm = item['ai_commentary']?.toString().trim() ?? '';
+              if (s.isNotEmpty && comm.isNotEmpty) {
+                bySymbol[s] = comm;
+              }
+            }
+          }
+
+          final updatedCoins = report.coins.map((c) {
+            final aiComm = bySymbol[c.symbol.toUpperCase()];
+            if (aiComm == null || aiComm.isEmpty) return c;
+            return c.withAiCommentary(aiComm);
+          }).toList();
+
+          final combinedMacro = macroInsight.isNotEmpty
+              ? '${report.macroStrategySummary}\n\n🧠 Інституційний вердикт AI: $macroInsight'
+              : report.macroStrategySummary;
+
+          return report.copyWith(
+            macroStrategySummary: combinedMacro,
+            coins: updatedCoins,
+          );
+        }
+      }
+    } catch (_) {}
+
+    return report;
+  }
+}
+
 

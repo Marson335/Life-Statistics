@@ -99,6 +99,23 @@ class TpSlInfo {
   final String btcMarketRegime;
   final List<DcaOrderLevel> dcaLadder;
 
+  // Інституційна матриця фіксації на піку та захисту від Stop-Loss (Smart Exit Engine)
+  final String exitSignalCode; // SELL_PEAK_NOW, TAKE_PARTIAL_TP1, TRAILING_STOP_HIT, PRE_STOP_DANGER, HOLD_WAIT_TARGETS, ACCUMULATE_ZONE, STABLECOIN
+  final String exitTitleUk;
+  final String exitActionUk;
+  final int recommendedSellPct;
+  final int peakExhaustionScore; // 0..100% (ймовірність розвороту з локальної вершини)
+  final int slProbabilityPct; // 0..99% (ймовірність падіння до Stop-Loss)
+  final String slRiskFactorsUk;
+  final double recentPeak20d;
+  final double pullbackFromPeakPct;
+  final double trailingStopPrice; // Chandelier Exit (Peak - 1.8*ATR)
+  final double breakevenPrice; // Ціна закупки + покриття комісій біржі (+0.25%)
+  final double earlyExitPrice; // Лінія ранньої евакуації (Pre-Stop Invalidation)
+  final double takerBuyRatio; // % ринкових покупок Taker Buy (Order Flow)
+  final double ema50;
+  final bool isTp1Reached;
+
   TpSlInfo({
     required this.entryPrice,
     required this.tp1,
@@ -138,6 +155,21 @@ class TpSlInfo {
     this.riskRewardLabel = '🟡 Помірний R:R (2.0 : 1)',
     this.btcMarketRegime = '⚪ Нейтральний ринок BTC',
     this.dcaLadder = const [],
+    this.exitSignalCode = 'HOLD_WAIT_TARGETS',
+    this.exitTitleUk = '🛡️ УТРИМУВАТИ ПОЗИЦІЮ (Тренд стабільний)',
+    this.exitActionUk = 'Структура позиції в нормі. Очікуйте досягнення рівнів фіксації прибутку.',
+    this.recommendedSellPct = 0,
+    this.peakExhaustionScore = 25,
+    this.slProbabilityPct = 20,
+    this.slRiskFactorsUk = 'Структура вище рівнів підтримки, тиск продавців помірний',
+    this.recentPeak20d = 0.0,
+    this.pullbackFromPeakPct = 0.0,
+    this.trailingStopPrice = 0.0,
+    this.breakevenPrice = 0.0,
+    this.earlyExitPrice = 0.0,
+    this.takerBuyRatio = 50.0,
+    this.ema50 = 0.0,
+    this.isTp1Reached = false,
   });
 }
 
@@ -860,6 +892,12 @@ class AiMarketRadarReport {
   final int setupsFound;
   final Map<String, int> funnel;
 
+  /// true — сканування не вдалося (мережа / ліміти Binance); macroSummary містить причину.
+  final bool isError;
+
+  /// Сумарний ризик відібраних сигналів, % депозиту (ліміт на портфель).
+  final double totalOpenRiskPct;
+
   const AiMarketRadarReport({
     required this.scannedAt,
     required this.marketRegime,
@@ -872,6 +910,8 @@ class AiMarketRadarReport {
     this.coinsDeepAnalyzed = 0,
     this.setupsFound = 0,
     this.funnel = const {},
+    this.isError = false,
+    this.totalOpenRiskPct = 0.0,
   });
 
   AiMarketRadarReport copyWith({
@@ -890,6 +930,8 @@ class AiMarketRadarReport {
         coinsDeepAnalyzed: coinsDeepAnalyzed,
         setupsFound: setupsFound,
         funnel: funnel,
+        isError: isError,
+        totalOpenRiskPct: totalOpenRiskPct,
       );
 
   Map<String, dynamic> toJson() => {
@@ -904,6 +946,8 @@ class AiMarketRadarReport {
         'coinsDeepAnalyzed': coinsDeepAnalyzed,
         'setupsFound': setupsFound,
         'funnel': funnel,
+        'isError': isError,
+        'totalOpenRiskPct': totalOpenRiskPct,
       };
 
   factory AiMarketRadarReport.fromJson(Map<String, dynamic> json) => AiMarketRadarReport(
@@ -924,6 +968,8 @@ class AiMarketRadarReport {
         setupsFound: (json['setupsFound'] as num?)?.toInt() ?? 0,
         funnel: (json['funnel'] as Map<String, dynamic>? ?? {})
             .map((k, v) => MapEntry(k, (v as num?)?.toInt() ?? 0)),
+        isError: json['isError'] == true,
+        totalOpenRiskPct: (json['totalOpenRiskPct'] as num?)?.toDouble() ?? 0.0,
       );
 
   factory AiMarketRadarReport.empty() => AiMarketRadarReport(
@@ -936,3 +982,282 @@ class AiMarketRadarReport {
         opportunities: const [],
       );
 }
+
+// ==========================================
+// ФУНДАМЕНТАЛЬНИЙ АНАЛІЗ БАЗОВИХ L1 МОНЕТ (BTC, ETH, SOL, BNB, XRP, SUI, TON...)
+// ==========================================
+
+class FundamentalCyclePhase {
+  static const String deepValue = 'DEEP_VALUE'; // 🟢 Агресивна закупка (недооцінка / дно)
+  static const String dcaAccumulation = 'DCA_ACCUMULATION'; // 🔵 Плановий добір (справедлива ціна / зона DCA)
+  static const String trendHold = 'TREND_HOLD'; // 🟡 Утримання (HODL / чекати локального відкату)
+  static const String overheatedTakeProfit = 'OVERHEATED_TAKE_PROFIT'; // 🟠 Часткова фіксація (перегрів)
+  static const String euphoriaSell = 'EUPHORIA_SELL'; // 🔴 Продаж / розподіл (пік циклу)
+}
+
+class FundamentalCoinAnalysis {
+  final String symbol;
+  final String name;
+  final String roleLabel; // напр. "Цифрове золото · Макро-еталон"
+  final double currentPrice;
+  final double chg24h;
+  final double chg30d;
+  final double chg90d;
+  final double chg365d;
+
+  // --- 1. Макро-рівні та Інституційна Собівартість (365D) ---
+  final double sma200;
+  final double ema50;
+  final double ema200;
+  final double vwap365; // 365-денна об'ємно-зважена ціна (Realized Price Proxy / Собівартість ринку)
+  final double poc365; // Point of Control (рівень максимального проторгованого об'єму за 365 днів)
+  final double ath365;
+  final double atl365;
+  final double dropFromAthPct;
+  final double rangePositionPct; // 0% = річне дно, 100% = річний пік
+
+  // --- 2. Квантові мультиплікатори оцінки ---
+  final double mayerMultiple; // Price / SMA200 (<0.85 дно, 0.85-1.20 норма, >1.65 перегрів, >2.1 ейфорія)
+  final double mvrvProxy; // Price / VWAP365 (<1.0 нижче собівартості покупців за рік)
+  final double rsi14d; // Денний RSI (14D)
+  final double rsi14w; // Тижневий RSI (14W з 52 тижневих свічок)
+  final double atrPct;
+  final double rsVsBtc30d;
+  final double rsVsBtc90d;
+  final double takerBuyRatio7d;
+  final double takerDeltaPp;
+  final double upDownVolRatio;
+
+  // --- 3. Цикловий Вердикт та Індекси (0..100) ---
+  final String cyclePhase;
+  final String actionTitleUk;
+  final String recommendedActionShort;
+  final int accumulationScore; // 0-100: наскільки вигідно КУПУВАТИ зараз (100 = ідеальне дно)
+  final int sellPressureScore; // 0-100: наскільки актив ПЕРЕГРІТИЙ для ПРОДАЖУ (100 = пік циклу)
+
+  // --- 4. Трирівнева драбина ЗАКУПКИ (Smart DCA) ---
+  final double buyZone1Price;
+  final int buyZone1SharePct;
+  final String buyZone1Label;
+  final double buyZone2Price;
+  final int buyZone2SharePct;
+  final String buyZone2Label;
+  final double buyZone3Price;
+  final int buyZone3SharePct;
+  final String buyZone3Label;
+
+  // --- 5. Трирівнева драбина ПРОДАЖУ / ФІКСАЦІЇ (Cycle Distribution) ---
+  final double tp1Price;
+  final int tp1SharePct;
+  final String tp1Label;
+  final double tp2Price;
+  final int tp2SharePct;
+  final String tp2Label;
+  final double tp3Price;
+  final int tp3SharePct;
+  final String tp3Label;
+  final double invalidationStopPrice;
+  final String invalidationRule;
+
+  // --- 6. Аналітичне пояснення трейдера ---
+  final String valuationSummary;
+  final String buyTriggerRule;
+  final String sellTriggerRule;
+  final String aiCommentary;
+
+  const FundamentalCoinAnalysis({
+    required this.symbol,
+    required this.name,
+    required this.roleLabel,
+    required this.currentPrice,
+    required this.chg24h,
+    required this.chg30d,
+    required this.chg90d,
+    required this.chg365d,
+    required this.sma200,
+    required this.ema50,
+    required this.ema200,
+    required this.vwap365,
+    required this.poc365,
+    required this.ath365,
+    required this.atl365,
+    required this.dropFromAthPct,
+    required this.rangePositionPct,
+    required this.mayerMultiple,
+    required this.mvrvProxy,
+    required this.rsi14d,
+    required this.rsi14w,
+    required this.atrPct,
+    required this.rsVsBtc30d,
+    required this.rsVsBtc90d,
+    required this.takerBuyRatio7d,
+    required this.takerDeltaPp,
+    required this.upDownVolRatio,
+    required this.cyclePhase,
+    required this.actionTitleUk,
+    required this.recommendedActionShort,
+    required this.accumulationScore,
+    required this.sellPressureScore,
+    required this.buyZone1Price,
+    required this.buyZone1SharePct,
+    required this.buyZone1Label,
+    required this.buyZone2Price,
+    required this.buyZone2SharePct,
+    required this.buyZone2Label,
+    required this.buyZone3Price,
+    required this.buyZone3SharePct,
+    required this.buyZone3Label,
+    required this.tp1Price,
+    required this.tp1SharePct,
+    required this.tp1Label,
+    required this.tp2Price,
+    required this.tp2SharePct,
+    required this.tp2Label,
+    required this.tp3Price,
+    required this.tp3SharePct,
+    required this.tp3Label,
+    required this.invalidationStopPrice,
+    required this.invalidationRule,
+    required this.valuationSummary,
+    required this.buyTriggerRule,
+    required this.sellTriggerRule,
+    this.aiCommentary = '',
+  });
+
+  double get distToBuyZone1Pct =>
+      currentPrice > 0 ? ((buyZone1Price - currentPrice) / currentPrice) * 100.0 : 0.0;
+  double get distToBuyZone2Pct =>
+      currentPrice > 0 ? ((buyZone2Price - currentPrice) / currentPrice) * 100.0 : 0.0;
+  double get distToBuyZone3Pct =>
+      currentPrice > 0 ? ((buyZone3Price - currentPrice) / currentPrice) * 100.0 : 0.0;
+
+  double get tp1UpsidePct =>
+      currentPrice > 0 ? ((tp1Price - currentPrice) / currentPrice) * 100.0 : 0.0;
+  double get tp2UpsidePct =>
+      currentPrice > 0 ? ((tp2Price - currentPrice) / currentPrice) * 100.0 : 0.0;
+  double get tp3UpsidePct =>
+      currentPrice > 0 ? ((tp3Price - currentPrice) / currentPrice) * 100.0 : 0.0;
+
+  bool get isBuyRecommended =>
+      cyclePhase == FundamentalCyclePhase.deepValue ||
+      cyclePhase == FundamentalCyclePhase.dcaAccumulation;
+
+  bool get isSellRecommended =>
+      cyclePhase == FundamentalCyclePhase.overheatedTakeProfit ||
+      cyclePhase == FundamentalCyclePhase.euphoriaSell;
+
+  FundamentalCoinAnalysis withAiCommentary(String commentary) {
+    if (commentary.trim().isEmpty) return this;
+    return FundamentalCoinAnalysis(
+      symbol: symbol,
+      name: name,
+      roleLabel: roleLabel,
+      currentPrice: currentPrice,
+      chg24h: chg24h,
+      chg30d: chg30d,
+      chg90d: chg90d,
+      chg365d: chg365d,
+      sma200: sma200,
+      ema50: ema50,
+      ema200: ema200,
+      vwap365: vwap365,
+      poc365: poc365,
+      ath365: ath365,
+      atl365: atl365,
+      dropFromAthPct: dropFromAthPct,
+      rangePositionPct: rangePositionPct,
+      mayerMultiple: mayerMultiple,
+      mvrvProxy: mvrvProxy,
+      rsi14d: rsi14d,
+      rsi14w: rsi14w,
+      atrPct: atrPct,
+      rsVsBtc30d: rsVsBtc30d,
+      rsVsBtc90d: rsVsBtc90d,
+      takerBuyRatio7d: takerBuyRatio7d,
+      takerDeltaPp: takerDeltaPp,
+      upDownVolRatio: upDownVolRatio,
+      cyclePhase: cyclePhase,
+      actionTitleUk: actionTitleUk,
+      recommendedActionShort: recommendedActionShort,
+      accumulationScore: accumulationScore,
+      sellPressureScore: sellPressureScore,
+      buyZone1Price: buyZone1Price,
+      buyZone1SharePct: buyZone1SharePct,
+      buyZone1Label: buyZone1Label,
+      buyZone2Price: buyZone2Price,
+      buyZone2SharePct: buyZone2SharePct,
+      buyZone2Label: buyZone2Label,
+      buyZone3Price: buyZone3Price,
+      buyZone3SharePct: buyZone3SharePct,
+      buyZone3Label: buyZone3Label,
+      tp1Price: tp1Price,
+      tp1SharePct: tp1SharePct,
+      tp1Label: tp1Label,
+      tp2Price: tp2Price,
+      tp2SharePct: tp2SharePct,
+      tp2Label: tp2Label,
+      tp3Price: tp3Price,
+      tp3SharePct: tp3SharePct,
+      tp3Label: tp3Label,
+      invalidationStopPrice: invalidationStopPrice,
+      invalidationRule: invalidationRule,
+      valuationSummary: valuationSummary,
+      buyTriggerRule: buyTriggerRule,
+      sellTriggerRule: sellTriggerRule,
+      aiCommentary: commentary.trim(),
+    );
+  }
+}
+
+class FundamentalAnalysisReport {
+  final DateTime analyzedAt;
+  final String marketCycleLabel; // напр. "ФАЗА НАКОПИЧЕННЯ (Недооцінка Ядра)"
+  final String btcCyclePhase;
+  final double btcMayerMultiple;
+  final double btcMvrvProxy;
+  final double ethBtcRatio;
+  final String ethBtcStatus;
+  final double solBtcRatio;
+  final String solBtcStatus;
+  final int recommendedCoreAllocationPct; // скільки % портфеля тримати у фундаментальних L1
+  final int recommendedCashPct; // скільки % тримати у стейблкоїнах під лімітки
+  final String macroStrategySummary;
+  final List<FundamentalCoinAnalysis> coins;
+
+  const FundamentalAnalysisReport({
+    required this.analyzedAt,
+    required this.marketCycleLabel,
+    required this.btcCyclePhase,
+    required this.btcMayerMultiple,
+    required this.btcMvrvProxy,
+    required this.ethBtcRatio,
+    required this.ethBtcStatus,
+    required this.solBtcRatio,
+    required this.solBtcStatus,
+    required this.recommendedCoreAllocationPct,
+    required this.recommendedCashPct,
+    required this.macroStrategySummary,
+    required this.coins,
+  });
+
+  FundamentalAnalysisReport copyWith({
+    String? macroStrategySummary,
+    List<FundamentalCoinAnalysis>? coins,
+  }) =>
+      FundamentalAnalysisReport(
+        analyzedAt: analyzedAt,
+        marketCycleLabel: marketCycleLabel,
+        btcCyclePhase: btcCyclePhase,
+        btcMayerMultiple: btcMayerMultiple,
+        btcMvrvProxy: btcMvrvProxy,
+        ethBtcRatio: ethBtcRatio,
+        ethBtcStatus: ethBtcStatus,
+        solBtcRatio: solBtcRatio,
+        solBtcStatus: solBtcStatus,
+        recommendedCoreAllocationPct: recommendedCoreAllocationPct,
+        recommendedCashPct: recommendedCashPct,
+        macroStrategySummary: macroStrategySummary ?? this.macroStrategySummary,
+        coins: coins ?? this.coins,
+      );
+}
+

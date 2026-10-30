@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/models/crypto_models.dart';
 import '../providers/crypto_portfolio_provider.dart';
 import 'tp_sl_dialog.dart';
+import '../../data/crypto_alert_service.dart';
 
 class HoldingListTile extends StatelessWidget {
   final HoldingItem holding;
@@ -53,6 +55,35 @@ class HoldingListTile extends StatelessWidget {
     final periodChg = _getPeriodChange();
     final isChgPositive = periodChg >= 0;
     final isPnlPositive = holding.pnlUsd >= 0;
+    final tpSl = holding.tpSl;
+    final isStable = tpSl.exitSignalCode == 'STABLECOIN';
+
+    final (Color signalColor, String signalShortLabel) = switch (tpSl.exitSignalCode) {
+      'SELL_PEAK_NOW' => (
+          const Color(0xFFF3BA2F),
+          '🔥 Фіксувати ${tpSl.recommendedSellPct}% (Пік ${tpSl.peakExhaustionScore}%)',
+        ),
+      'TRAILING_STOP_HIT' => (
+          AppColors.warning,
+          '🔒 Трейлінг пробито (Продати ${tpSl.recommendedSellPct}%)',
+        ),
+      'TAKE_PARTIAL_TP1' => (
+          AppColors.greenTask,
+          '🟢 Частковий TP1 (30%)',
+        ),
+      'PRE_STOP_DANGER' => (
+          AppColors.redTask,
+          '🚨 Загроза SL ${tpSl.slProbabilityPct}% (Пре-стоп \$${_formatPrice(tpSl.earlyExitPrice)})',
+        ),
+      'ACCUMULATE_ZONE' => (
+          AppColors.blueTask,
+          '💎 Зона добору (RSI ${tpSl.rsi.toStringAsFixed(0)})',
+        ),
+      _ => (
+          AppColors.textSecondary,
+          '🛡️ Тримати · Ризик SL ${tpSl.slProbabilityPct}%',
+        ),
+    };
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4),
@@ -126,6 +157,14 @@ class HoldingListTile extends StatelessWidget {
                               ),
                             ),
                           ),
+                          if (CryptoAlertService().isCoinMonitored(holding.symbol)) ...[
+                            const SizedBox(width: 4),
+                            const Icon(
+                              Icons.notifications_active_rounded,
+                              size: 11,
+                              color: AppColors.accent,
+                            ),
+                          ],
                         ],
                       ),
                       const SizedBox(height: 2),
@@ -138,26 +177,44 @@ class HoldingListTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      if (holding.sources.isNotEmpty) ...[
-                        const SizedBox(height: 4),
-                        Wrap(
-                          spacing: 4,
-                          children: holding.sources.map((s) => Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: AppColors.accent.withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              s,
-                              style: const TextStyle(
-                                color: AppColors.accentLight,
-                                fontSize: 9,
+                      const SizedBox(height: 4),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: [
+                          if (!isStable)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                color: signalColor.withValues(alpha: 0.14),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: signalColor.withValues(alpha: 0.35), width: 0.8),
+                              ),
+                              child: Text(
+                                signalShortLabel,
+                                style: TextStyle(
+                                  color: signalColor,
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
-                          )).toList(),
-                        ),
-                      ],
+                          ...holding.sources.map((s) => Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: AppColors.accent.withValues(alpha: 0.12),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  s,
+                                  style: const TextStyle(
+                                    color: AppColors.accentLight,
+                                    fontSize: 9,
+                                  ),
+                                ),
+                              )),
+                        ],
+                      ),
                     ],
                   ),
                 ),
@@ -166,15 +223,17 @@ class HoldingListTile extends StatelessWidget {
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      '\$${holding.totalUsd.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        '\$${_formatTotalUsd(holding.totalUsd)}',
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 15,
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
                     Row(
@@ -195,15 +254,17 @@ class HoldingListTile extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 2),
-                    Text(
-                      'PnL: ${isPnlPositive ? '+' : ''}\$${holding.pnlUsd.toStringAsFixed(2)} (${isPnlPositive ? '+' : ''}${holding.pnlPct.toStringAsFixed(1)}%)',
-                      style: TextStyle(
-                        color: isPnlPositive ? AppColors.greenTask : AppColors.redTask,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w500,
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'PnL: ${_formatPnlUsd(holding.pnlUsd)} (${isPnlPositive ? '+' : ''}${holding.pnlPct.toStringAsFixed(2)}%)',
+                        style: TextStyle(
+                          color: isPnlPositive ? AppColors.greenTask : AppColors.redTask,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),
@@ -221,6 +282,27 @@ class HoldingListTile extends StatelessWidget {
     );
   }
 
+  String _formatTotalUsd(double val) {
+    if (val == 0) return '0.00';
+    final abs = val.abs();
+    if (abs >= 1000) return NumberFormat('#,##0.00', 'en_US').format(abs);
+    if (abs >= 0.01) return abs.toStringAsFixed(2);
+    return abs.toStringAsFixed(4);
+  }
+
+  String _formatPnlUsd(double pnl) {
+    if (pnl == 0.0) return '\$0.00';
+    final sign = pnl >= 0 ? '+' : '-';
+    final abs = pnl.abs();
+    if (abs >= 1000) {
+      return '$sign\$${NumberFormat('#,##0.00', 'en_US').format(abs)}';
+    } else if (abs >= 0.01) {
+      return '$sign\$${abs.toStringAsFixed(2)}';
+    } else {
+      return '$sign\$${abs.toStringAsFixed(4)}';
+    }
+  }
+
   String _formatAmount(double amt) {
     if (amt >= 1000) return amt.toStringAsFixed(2);
     if (amt >= 1) return amt.toStringAsFixed(4);
@@ -228,8 +310,15 @@ class HoldingListTile extends StatelessWidget {
   }
 
   String _formatPrice(double p) {
-    if (p >= 1000) return p.toStringAsFixed(2);
-    if (p >= 1) return p.toStringAsFixed(4);
-    return p.toStringAsFixed(6);
+    if (p == 0) return '0.0000';
+    final abs = p.abs();
+    final sign = p < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.0000', 'en_US').format(abs)}';
+    } else if (abs >= 0.0001) {
+      return '$sign${abs.toStringAsFixed(4)}';
+    } else {
+      return '$sign${abs.toStringAsFixed(6)}';
+    }
   }
 }

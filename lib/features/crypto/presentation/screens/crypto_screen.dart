@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../data/models/crypto_models.dart';
@@ -10,6 +11,7 @@ import '../widgets/crypto_allocation_chart.dart';
 import '../widgets/holding_list_tile.dart';
 import '../widgets/dca_add_dialog.dart';
 import '../widgets/crypto_rank_chart_card.dart';
+import '../widgets/tp_sl_dialog.dart';
 
 class CryptoScreen extends ConsumerStatefulWidget {
   const CryptoScreen({super.key});
@@ -22,17 +24,28 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
   int _binanceSubTab = 0; // 0: Spot, 1: Futures, 2: Earn
-  int _dcaFilterIndex = 0; // 0: Всі, 1: Binance, 2: Ручні
+  int _dcaFilterIndex = 0; // 0: Всі, 1: Binance, 2: Web3, 3: Ручні
   int _radarFilterIndex = 0; // 0: Всі, 1: Купувати зараз, 2: Лімітка / Пробій
+  int _fundamentalFilterIndex = 0; // 0: Всі L1, 1: Купувати, 2: Утримання, 3: Фіксація
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _tabController = TabController(length: 6, vsync: this);
+    _tabController = TabController(length: 7, vsync: this);
+    _tabController.addListener(_onTabChanged);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       ref.read(cryptoPortfolioProvider.notifier).startLiveStreaming();
     });
+  }
+
+  void _onTabChanged() {
+    if (!_tabController.indexIsChanging && _tabController.index == 4) {
+      final st = ref.read(cryptoPortfolioProvider);
+      if (st.fundamentalReport == null && !st.isAnalyzingFundamentals) {
+        ref.read(cryptoPortfolioProvider.notifier).runFundamentalAnalysis();
+      }
+    }
   }
 
   @override
@@ -48,6 +61,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _tabController.removeListener(_onTabChanged);
     _tabController.dispose();
     super.dispose();
   }
@@ -92,6 +106,11 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
             onPressed: state.isLoading ? null : () => notifier.refreshPortfolio(),
             tooltip: 'Оновити всі дані',
           ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: AppColors.textSecondary, size: 22),
+            tooltip: 'Налаштування',
+            onPressed: () => context.go('/settings'),
+          ),
           const SizedBox(width: 8),
         ],
         bottom: TabBar(
@@ -108,6 +127,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
             Tab(icon: Icon(Icons.currency_exchange_rounded, size: 18), text: 'Binance'),
             Tab(icon: Icon(Icons.hub_rounded, size: 18), text: 'Web3'),
             Tab(icon: Icon(Icons.history_rounded, size: 18), text: 'DCA Історія'),
+            Tab(icon: Icon(Icons.layers_rounded, size: 18), text: 'Фундамент L1'),
             Tab(icon: Icon(Icons.radar_rounded, size: 18), text: 'AI-Радар'),
             Tab(icon: Icon(Icons.auto_awesome_rounded, size: 18), text: 'AI-Аудит'),
           ],
@@ -122,16 +142,19 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
           // 2. ВКЛАДКА "BINANCE" (Спот, Ф'ючерси, Simple Earn)
           _buildBinanceTab(state, notifier),
 
-          // 3. ВКЛАДКА "WEB3" (Solana + EVM/MetaMask)
-          _buildWeb3Tab(state),
+          // 3. ВКЛАДКА "WEB3" (Solana + EVM/MetaMask + Bitcoin On-chain)
+          _buildWeb3Tab(state, notifier),
 
           // 4. ВКЛАДКА "DCA ІСТОРІЯ"
           _buildDcaTab(state, notifier),
 
-          // 5. ВКЛАДКА "AI-РАДАР" (Сканер 350+ пар Binance)
+          // 5. ВКЛАДКА "ФУНДАМЕНТ L1" (Базові монети першого шару: BTC, ETH, SOL, BNB...)
+          _buildFundamentalL1Tab(state, notifier),
+
+          // 6. ВКЛАДКА "AI-РАДАР" (Сканер 350+ пар Binance)
           _buildAiRadarTab(state, notifier),
 
-          // 6. ВКЛАДКА "AI-АУДИТ" (Groq Llama 3.3 70B)
+          // 7. ВКЛАДКА "AI-АУДИТ" (Groq Llama 3.3 70B)
           _buildAiAuditTab(state, notifier),
         ],
       ),
@@ -229,9 +252,13 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                   ),
                   const SizedBox(height: 16),
                   ElevatedButton.icon(
-                    style: ElevatedButton.styleFrom(backgroundColor: AppColors.accent),
-                    icon: const Icon(Icons.add, color: Colors.white),
-                    label: const Text('Додати DCA покупку', style: TextStyle(color: Colors.white)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                      foregroundColor: Colors.black,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                    ),
+                    icon: const Icon(Icons.add, color: Colors.black),
+                    label: const Text('Додати DCA покупку', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                     onPressed: () => _openAddDcaDialog(notifier),
                   ),
                 ],
@@ -294,7 +321,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
             overflow: TextOverflow.ellipsis,
             textAlign: TextAlign.center,
             style: TextStyle(
-              color: isSelected ? Colors.white : AppColors.textSecondary,
+              color: isSelected ? Colors.black : AppColors.textSecondary,
               fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
               fontSize: 11,
             ),
@@ -492,11 +519,11 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Flexible(child: Text('Вхід: \$${p.entryPrice.toStringAsFixed(2)}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      Flexible(child: Text('Вхід: \$${_formatPrice(p.entryPrice)}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
                       const SizedBox(width: 4),
-                      Flexible(child: Text('Mark: \$${p.markPrice.toStringAsFixed(2)}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      Flexible(child: Text('Mark: \$${_formatPrice(p.markPrice)}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
                       const SizedBox(width: 4),
-                      Flexible(child: Text('Liq: \$${p.liquidationPrice.toStringAsFixed(2)}', style: const TextStyle(color: AppColors.warning, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
+                      Flexible(child: Text('Liq: \$${_formatPrice(p.liquidationPrice)}', style: const TextStyle(color: AppColors.warning, fontSize: 11), maxLines: 1, overflow: TextOverflow.ellipsis)),
                     ],
                   ),
                 ],
@@ -575,33 +602,89 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
   }
 
   // ==========================================
-  // 3. ВКЛАДКА: WEB3 (SOLANA & EVM)
+  // 3. ВКЛАДКА: WEB3 (ETHEREUM/EVM, SOLANA & BITCOIN)
   // ==========================================
-  Widget _buildWeb3Tab(CryptoPortfolioState state) {
-    return ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        // SOLANA
-        _buildWeb3ChainSection(
-          chainName: 'Solana (Helius RPC)',
-          icon: Icons.flash_on_rounded,
-          iconColor: const Color(0xFF14F195),
-          assets: state.solanaAssets,
-        ),
-        const SizedBox(height: 20),
-        // EVM / METAMASK
-        _buildWeb3ChainSection(
-          chainName: 'Ethereum & EVM (Ethplorer)',
-          icon: Icons.shield_rounded,
-          iconColor: const Color(0xFF627EEA),
-          assets: state.evmAssets,
-        ),
-      ],
+  Widget _buildWeb3Tab(CryptoPortfolioState state, CryptoPortfolioNotifier notifier) {
+    final allWeb3Empty = state.evmAssets.isEmpty && state.solanaAssets.isEmpty && state.btcAssets.isEmpty;
+
+    return RefreshIndicator(
+      color: AppColors.accent,
+      backgroundColor: AppColors.surface,
+      onRefresh: () => notifier.refreshPortfolio(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // 1. ETHEREUM & EVM / METAMASK
+          _buildWeb3ChainSection(
+            chainName: 'Ethereum & EVM (MetaMask / Trust)',
+            subtitle: 'ERC-20, ETH, WBTC та сумісні токени',
+            icon: Icons.shield_rounded,
+            iconColor: const Color(0xFF627EEA),
+            assets: state.evmAssets,
+          ),
+          const SizedBox(height: 16),
+
+          // 2. SOLANA
+          _buildWeb3ChainSection(
+            chainName: 'Solana (Phantom / Solflare)',
+            subtitle: 'SPL токени та нативний баланс SOL',
+            icon: Icons.flash_on_rounded,
+            iconColor: const Color(0xFF14F195),
+            assets: state.solanaAssets,
+          ),
+          const SizedBox(height: 16),
+
+          // 3. BITCOIN ON-CHAIN
+          _buildWeb3ChainSection(
+            chainName: 'Bitcoin (On-chain / Mempool)',
+            subtitle: 'Нативний BTC баланс у блокчейні Bitcoin',
+            icon: Icons.currency_bitcoin_rounded,
+            iconColor: const Color(0xFFF7931A),
+            assets: state.btcAssets,
+          ),
+
+          if (allWeb3Empty) ...[
+            const SizedBox(height: 20),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.15),
+                      shape: BoxShape.circle,
+                    ),
+                    child: const Icon(Icons.account_balance_wallet_outlined, color: AppColors.accentLight, size: 32),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'Блокчейн-гаманці не підключені',
+                    style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 15),
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Додайте ваші адреси (MetaMask EVM 0x..., Phantom Solana, Bitcoin) у Налаштуваннях, і їхні баланси будуть автоматично підвантажені в портфель.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.4),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
   Widget _buildWeb3ChainSection({
     required String chainName,
+    String? subtitle,
     required IconData icon,
     required Color iconColor,
     required List<Web3Asset> assets,
@@ -627,14 +710,35 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
               Expanded(
                 child: Row(
                   children: [
-                    Icon(icon, color: iconColor, size: 20),
-                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: iconColor.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Icon(icon, color: iconColor, size: 18),
+                    ),
+                    const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        chainName,
-                        style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 15),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            chainName,
+                            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13.5),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (subtitle != null) ...[
+                            const SizedBox(height: 1),
+                            Text(
+                              subtitle,
+                              style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                   ],
@@ -665,7 +769,16 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                       Expanded(
                         child: Row(
                           children: [
-                            Text(a.symbol, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 14)),
+                            CircleAvatar(
+                              radius: 12,
+                              backgroundColor: iconColor.withValues(alpha: 0.15),
+                              child: Text(
+                                a.symbol.length > 3 ? a.symbol.substring(0, 3) : a.symbol,
+                                style: TextStyle(color: iconColor, fontSize: 8.5, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(a.symbol, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 13)),
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
@@ -682,8 +795,14 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          Text('\$${a.totalUsd.toStringAsFixed(2)}', style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 13)),
-                          Text('${a.amount.toStringAsFixed(4)} @ \$${a.priceUsd.toStringAsFixed(2)}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
+                          Text(
+                            a.totalUsd > 0 ? '\$${a.totalUsd.toStringAsFixed(2)}' : (a.priceUsd > 0 ? '\$${(a.amount * a.priceUsd).toStringAsFixed(2)}' : '—'),
+                            style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w600, fontSize: 13),
+                          ),
+                          Text(
+                            '${_formatAmount(a.amount)} ${a.priceUsd > 0 ? '@ \$${_formatPrice(a.priceUsd)}' : ''}',
+                            style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+                          ),
                         ],
                       ),
                     ],
@@ -705,6 +824,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     final isPnlPositive = totals.totalPnlUsd >= 0;
     final pnlColor = isPnlPositive ? AppColors.greenTask : AppColors.redTask;
     final binanceCoins = state.binanceDcaCoins;
+    final web3Coins = state.web3DcaCoins;
     final manualCoins = state.manualDcaCoins;
     final allCoins = state.groupedDcaCoins;
 
@@ -729,24 +849,62 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    const Text(
-                      'АКТИВНИЙ DCA ПОРТФЕЛЬ (FIFO)',
-                      style: TextStyle(
-                        color: AppColors.textSecondary,
-                        fontSize: 11,
-                        fontWeight: FontWeight.bold,
-                        letterSpacing: 0.8,
+                    Flexible(
+                      child: Wrap(
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 6,
+                        runSpacing: 4,
+                        children: [
+                          const Text(
+                            'АКТИВНИЙ DCA (FIFO)',
+                            style: TextStyle(
+                              color: AppColors.textSecondary,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                          if (state.isLive)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                color: AppColors.greenTask.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                                border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.4)),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  CircleAvatar(radius: 2.5, backgroundColor: AppColors.greenTask),
+                                  SizedBox(width: 3),
+                                  Text(
+                                    'LIVE',
+                                    style: TextStyle(
+                                      color: AppColors.greenTask,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: pnlColor.withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        '${isPnlPositive ? '+' : ''}${totals.totalPnlPct.toStringAsFixed(2)}%',
-                        style: TextStyle(color: pnlColor, fontSize: 11, fontWeight: FontWeight.bold),
+                    const SizedBox(width: 8),
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: pnlColor.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '${isPnlPositive ? '+' : ''}${totals.totalPnlPct.toStringAsFixed(2)}%',
+                          style: TextStyle(color: pnlColor, fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
                       ),
                     ),
                   ],
@@ -781,28 +939,38 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                         ],
                       ),
                     ),
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Text(
-                          'Чистий PnL',
-                          style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '${isPnlPositive ? '+' : '-'}\$${totals.totalPnlUsd.abs().toStringAsFixed(2)}',
-                          style: TextStyle(
-                            color: pnlColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          const Text(
+                            'Чистий PnL',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
                           ),
-                        ),
-                        Text(
-                          'Вкладено: \$${totals.totalInvested.toStringAsFixed(2)}',
-                          style: const TextStyle(color: AppColors.textDisabled, fontSize: 10),
-                        ),
-                      ],
+                          const SizedBox(height: 2),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              '${isPnlPositive ? '+' : '-'}\$${totals.totalPnlUsd.abs().toStringAsFixed(2)}',
+                              style: TextStyle(
+                                color: pnlColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                          ),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              'Вкладено: \$${totals.totalInvested.toStringAsFixed(2)}',
+                              style: const TextStyle(color: AppColors.textDisabled, fontSize: 10),
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
                   ],
                 ),
@@ -810,45 +978,102 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 const Divider(color: AppColors.border, height: 1),
                 const SizedBox(height: 14),
 
-                // Кнопки дій: Синхронізація Binance та Ручне додавання
+                // Кнопки дій: Синхронізація Binance, Web3 On-chain та Ручне додавання
                 Row(
                   children: [
                     Expanded(
-                      child: ElevatedButton.icon(
+                      child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: const Color(0xFFF3BA2F).withValues(alpha: 0.15),
                           foregroundColor: const Color(0xFFF3BA2F),
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(10),
                             side: BorderSide(color: const Color(0xFFF3BA2F).withValues(alpha: 0.4)),
                           ),
                         ),
-                        icon: const Icon(Icons.sync_rounded, size: 18),
-                        label: const Text(
-                          'З Binance (FIFO)',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                        ),
                         onPressed: state.isLoading ? null : () => notifier.syncBinanceDca(),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.sync_rounded, size: 14),
+                            SizedBox(width: 4),
+                            Flexible(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  'Binance',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 10),
+                    const SizedBox(width: 6),
                     Expanded(
-                      child: ElevatedButton.icon(
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                          foregroundColor: AppColors.accentLight,
+                          elevation: 0,
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(color: AppColors.accent.withValues(alpha: 0.4)),
+                          ),
+                        ),
+                        onPressed: state.isLoading ? null : () => notifier.syncWeb3Dca(),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.account_balance_wallet_rounded, size: 14),
+                            SizedBox(width: 4),
+                            Flexible(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  'З Web3',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: ElevatedButton(
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.accent,
-                          foregroundColor: Colors.white,
+                          foregroundColor: Colors.black,
                           elevation: 0,
-                          padding: const EdgeInsets.symmetric(vertical: 11),
+                          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
-                        icon: const Icon(Icons.add_rounded, size: 18),
-                        label: const Text(
-                          'Вручну',
-                          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
-                        ),
                         onPressed: () => _openAddDcaDialog(notifier),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.add_rounded, size: 15, color: Colors.black),
+                            SizedBox(width: 4),
+                            Flexible(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  'Вручну',
+                                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11, color: Colors.black),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ],
@@ -858,31 +1083,43 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
           ),
           const SizedBox(height: 16),
 
-          // 2. ФІЛЬТР-СЕЛЕКТОР: ВСІ | BINANCE | РУЧНІ
-          Row(
-            children: [
-              _buildDcaFilterChip(
-                label: 'Всі (${allCoins.length})',
-                isSelected: _dcaFilterIndex == 0,
-                onTap: () => setState(() => _dcaFilterIndex = 0),
-              ),
-              const SizedBox(width: 8),
-              _buildDcaFilterChip(
-                label: 'Binance (${binanceCoins.length})',
-                icon: Icons.currency_exchange_rounded,
-                iconColor: const Color(0xFFF3BA2F),
-                isSelected: _dcaFilterIndex == 1,
-                onTap: () => setState(() => _dcaFilterIndex = 1),
-              ),
-              const SizedBox(width: 8),
-              _buildDcaFilterChip(
-                label: 'Ручні (${manualCoins.length})',
-                icon: Icons.edit_note_rounded,
-                iconColor: AppColors.accentLight,
-                isSelected: _dcaFilterIndex == 2,
-                onTap: () => setState(() => _dcaFilterIndex = 2),
-              ),
-            ],
+          // 2. ФІЛЬТР-СЕЛЕКТОР: ВСІ | BINANCE | WEB3 ON-CHAIN | РУЧНІ
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: Row(
+              children: [
+                _buildDcaFilterChip(
+                  label: 'Всі (${allCoins.length})',
+                  isSelected: _dcaFilterIndex == 0,
+                  onTap: () => setState(() => _dcaFilterIndex = 0),
+                ),
+                const SizedBox(width: 8),
+                _buildDcaFilterChip(
+                  label: 'Binance (${binanceCoins.length})',
+                  icon: Icons.currency_exchange_rounded,
+                  iconColor: const Color(0xFFF3BA2F),
+                  isSelected: _dcaFilterIndex == 1,
+                  onTap: () => setState(() => _dcaFilterIndex = 1),
+                ),
+                const SizedBox(width: 8),
+                _buildDcaFilterChip(
+                  label: 'Web3 On-chain (${web3Coins.length})',
+                  icon: Icons.account_balance_wallet_rounded,
+                  iconColor: AppColors.accentLight,
+                  isSelected: _dcaFilterIndex == 2,
+                  onTap: () => setState(() => _dcaFilterIndex = 2),
+                ),
+                const SizedBox(width: 8),
+                _buildDcaFilterChip(
+                  label: 'Ручні (${manualCoins.length})',
+                  icon: Icons.edit_note_rounded,
+                  iconColor: AppColors.greenTask,
+                  isSelected: _dcaFilterIndex == 3,
+                  onTap: () => setState(() => _dcaFilterIndex = 3),
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 14),
 
@@ -891,7 +1128,7 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
             // Фільтр: Тільки Binance
             if (binanceCoins.isEmpty)
               _buildEmptyState(
-                'Немає активних закупок з Binance.\n\nНатисніть кнопку "З Binance (FIFO)" вище для автоматичного розрахунку покупок та підтягування поточних активів.',
+                'Немає активних закупок з Binance.\n\nНатисніть кнопку "Binance" вище для автоматичного розрахунку покупок та підтягування поточних активів.',
               )
             else ...[
               _buildDcaSectionHeader(
@@ -903,9 +1140,29 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
               ...binanceCoins.map((coin) => _DcaCoinExpandableCard(
                     coin: coin,
                     notifier: notifier,
+                    holdingItem: _findHoldingForCoin(state, coin),
                   )),
             ],
           ] else if (_dcaFilterIndex == 2) ...[
+            // Фільтр: Тільки Web3 On-chain (Bitcoin, Ethereum/MetaMask, Solana)
+            if (web3Coins.isEmpty)
+              _buildEmptyState(
+                'Немає активних Web3 монет.\n\nВкажіть адреси гаманців (Bitcoin On-chain, MetaMask / EVM або Solana) у Налаштуваннях або натисніть "З Web3" для синхронізації.',
+              )
+            else ...[
+              _buildDcaSectionHeader(
+                title: '🌐 НЕКАСТОДІАЛЬНІ WEB3 ГАМАНЦІ',
+                count: web3Coins.length,
+                subtitle: 'Bitcoin On-chain, MetaMask (EVM) та Solana',
+                accentColor: AppColors.accentLight,
+              ),
+              ...web3Coins.map((coin) => _DcaCoinExpandableCard(
+                    coin: coin,
+                    notifier: notifier,
+                    holdingItem: _findHoldingForCoin(state, coin),
+                  )),
+            ],
+          ] else if (_dcaFilterIndex == 3) ...[
             // Фільтр: Тільки Ручні
             if (manualCoins.isEmpty)
               _buildEmptyState(
@@ -916,18 +1173,19 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 title: '✍️ РУЧНІ DCA ЗАПИСИ',
                 count: manualCoins.length,
                 subtitle: 'Транзакції додані користувачем вручну',
-                accentColor: AppColors.accentLight,
+                accentColor: AppColors.greenTask,
               ),
               ...manualCoins.map((coin) => _DcaCoinExpandableCard(
                     coin: coin,
                     notifier: notifier,
+                    holdingItem: _findHoldingForCoin(state, coin),
                   )),
             ],
           ] else ...[
             // Фільтр: Всі (Розділені секціями)
             if (allCoins.isEmpty)
               _buildEmptyState(
-                'Немає активних покупок.\n\nНатисніть "З Binance (FIFO)" для завантаження з біржі або "Вручну" щоб додати нову купівлю.',
+                'Немає активних покупок.\n\nНатисніть "Binance", "З Web3" або "Вручну" щоб додати активи до портфеля.',
               )
             else ...[
               if (binanceCoins.isNotEmpty) ...[
@@ -940,20 +1198,37 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                 ...binanceCoins.map((coin) => _DcaCoinExpandableCard(
                       coin: coin,
                       notifier: notifier,
+                      holdingItem: _findHoldingForCoin(state, coin),
                     )),
               ],
-              if (binanceCoins.isNotEmpty && manualCoins.isNotEmpty)
+              if (binanceCoins.isNotEmpty && (web3Coins.isNotEmpty || manualCoins.isNotEmpty))
+                const SizedBox(height: 16),
+              if (web3Coins.isNotEmpty) ...[
+                _buildDcaSectionHeader(
+                  title: '🌐 НЕКАСТОДІАЛЬНІ WEB3 ГАМАНЦІ',
+                  count: web3Coins.length,
+                  subtitle: 'Bitcoin On-chain, MetaMask (EVM) та Solana',
+                  accentColor: AppColors.accentLight,
+                ),
+                ...web3Coins.map((coin) => _DcaCoinExpandableCard(
+                      coin: coin,
+                      notifier: notifier,
+                      holdingItem: _findHoldingForCoin(state, coin),
+                    )),
+              ],
+              if (web3Coins.isNotEmpty && manualCoins.isNotEmpty)
                 const SizedBox(height: 16),
               if (manualCoins.isNotEmpty) ...[
                 _buildDcaSectionHeader(
                   title: '✍️ РУЧНІ DCA ЗАПИСИ',
                   count: manualCoins.length,
                   subtitle: 'Додані самостійно користувачем',
-                  accentColor: AppColors.accentLight,
+                  accentColor: AppColors.greenTask,
                 ),
                 ...manualCoins.map((coin) => _DcaCoinExpandableCard(
                       coin: coin,
                       notifier: notifier,
+                      holdingItem: _findHoldingForCoin(state, coin),
                     )),
               ],
             ],
@@ -963,6 +1238,16 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     );
   }
 
+  HoldingItem? _findHoldingForCoin(CryptoPortfolioState state, DcaGroupedCoin coin) {
+    final sym = coin.symbol.toUpperCase();
+    for (final h in state.overview.holdings) {
+      if (h.symbol.toUpperCase() == sym) {
+        return h;
+      }
+    }
+    return null;
+  }
+
   Widget _buildDcaFilterChip({
     required String label,
     IconData? icon,
@@ -970,43 +1255,38 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
     required bool isSelected,
     required VoidCallback onTap,
   }) {
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: isSelected ? AppColors.accent.withValues(alpha: 0.15) : AppColors.surface,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: isSelected ? AppColors.accent : AppColors.border,
-              width: isSelected ? 1.5 : 1,
-            ),
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.accent.withValues(alpha: 0.15) : AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? AppColors.accent : AppColors.border,
+            width: isSelected ? 1.5 : 1,
           ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(icon, size: 13, color: iconColor ?? AppColors.textSecondary),
-                const SizedBox(width: 4),
-              ],
-              Flexible(
-                child: Text(
-                  label,
-                  style: TextStyle(
-                    color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
-                    fontSize: 11,
-                    fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14, color: iconColor ?? AppColors.textSecondary),
+              const SizedBox(width: 5),
             ],
-          ),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                fontSize: 11.5,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+              ),
+              maxLines: 1,
+            ),
+          ],
         ),
       ),
     );
@@ -1138,18 +1418,18 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                   child: ElevatedButton.icon(
                     style: ElevatedButton.styleFrom(
                       backgroundColor: AppColors.accent,
-                      foregroundColor: Colors.white,
+                      foregroundColor: Colors.black,
                       padding: const EdgeInsets.symmetric(vertical: 13),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       elevation: 0,
                     ),
                     icon: state.isAuditing
                         ? const SizedBox(
                             width: 18,
                             height: 18,
-                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                            child: CircularProgressIndicator(color: Colors.black, strokeWidth: 2),
                           )
-                        : const Icon(Icons.psychology_rounded, color: Colors.white, size: 20),
+                        : const Icon(Icons.psychology_rounded, color: Colors.black, size: 20),
                     label: Text(
                       state.isAuditing
                           ? 'Аналізуємо структуру та індикатори...'
@@ -2056,23 +2336,29 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
   }
 
   String _formatDialogPrice(double val) {
-    if (val >= 1000) return val.toStringAsFixed(2);
-    if (val >= 1) return val.toStringAsFixed(3);
-    if (val >= 0.01) return val.toStringAsFixed(4);
-    return val.toStringAsFixed(6);
+    if (val == 0) return '0.0000';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 0.0001) return '$sign${abs.toStringAsFixed(4)}';
+    return '$sign${abs.toStringAsFixed(6)}';
+  }
+
+  String _formatAmount(double amt) {
+    if (amt >= 100) return amt.toStringAsFixed(2);
+    if (amt >= 1) return amt.toStringAsFixed(4);
+    return amt.toStringAsFixed(6).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
   }
 
   String _formatPrice(double val) {
-    if (val >= 1000) {
-      return NumberFormat('#,##0.00', 'en_US').format(val);
-    } else if (val >= 1) {
-      return val.toStringAsFixed(2);
-    } else if (val >= 0.01) {
-      return val.toStringAsFixed(4);
-    } else if (val > 0) {
-      return val.toStringAsFixed(6);
+    if (val == 0) return '0.0000';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.0000', 'en_US').format(abs)}';
+    } else if (abs >= 0.0001) {
+      return '$sign${abs.toStringAsFixed(4)}';
     } else {
-      return '0.00';
+      return '$sign${abs.toStringAsFixed(6)}';
     }
   }
 
@@ -2202,17 +2488,17 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.accent,
-                        foregroundColor: Colors.white,
+                        foregroundColor: Colors.black,
                         padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         elevation: 0,
                       ),
-                      icon: const Icon(Icons.radar_rounded, size: 20),
+                      icon: const Icon(Icons.radar_rounded, size: 20, color: Colors.black),
                       label: Text(
                         (report == null || report.totalCoinsScanned == 0)
                             ? 'Запустити Quant AI-Радар v3'
                             : 'Пересканувати ринок (230D Квант-Аналіз)',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.black),
                       ),
                       onPressed: () => notifier.scanMarketRadar(),
                     ),
@@ -2570,15 +2856,443 @@ class _CryptoScreenState extends ConsumerState<CryptoScreen>
       ),
     );
   }
+
+  // ==========================================
+  // 5. ВКЛАДКА: ФУНДАМЕНТАЛЬНІ МОНЕТИ ПЕРШОГО ШАРУ (LAYER-1 CORE)
+  // ==========================================
+  Widget _buildFundamentalL1Tab(CryptoPortfolioState state, CryptoPortfolioNotifier notifier) {
+    final report = state.fundamentalReport;
+    final isAnalyzing = state.isAnalyzingFundamentals;
+
+    final allCoins = report?.coins ?? const <FundamentalCoinAnalysis>[];
+    final buyCoins = allCoins.where((c) => c.isBuyRecommended).toList();
+    final holdCoins = allCoins
+        .where((c) => !c.isBuyRecommended && !c.isSellRecommended)
+        .toList();
+    final sellCoins = allCoins.where((c) => c.isSellRecommended).toList();
+
+    final filteredCoins = switch (_fundamentalFilterIndex) {
+      1 => buyCoins,
+      2 => holdCoins,
+      3 => sellCoins,
+      _ => allCoins,
+    };
+
+    return RefreshIndicator(
+      color: AppColors.accent,
+      backgroundColor: AppColors.surface,
+      onRefresh: () => notifier.runFundamentalAnalysis(),
+      child: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          // Головний інституційний банер вкладки Фундамент L1
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  AppColors.surface,
+                  const Color(0xFFF7931A).withValues(alpha: 0.12),
+                  AppColors.accent.withValues(alpha: 0.10),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppColors.accent.withValues(alpha: 0.35)),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF7931A).withValues(alpha: 0.18),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(
+                        Icons.layers_rounded,
+                        color: Color(0xFFF7931A),
+                        size: 24,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Фундаментальні L1 (База Крипторинку)',
+                            style: TextStyle(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 15.5,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          SizedBox(height: 2),
+                          Text(
+                            'BTC · ETH · SOL · BNB · XRP · SUI · TON · AVAX · ADA · TRX',
+                            style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                const Text(
+                  'Інституційний циклічний алгоритм для базових блокчейнів першого рівня (без спекулятивних альткоїнів та стейблкоїнів). Аналізує 365 денних + 52 тижневі свічки, собівартість ринку (365D VWAP / MVRV), мультиплікатор Майєра (Ціна/SMA200) та об\'ємний рівень POC, щоб чітко показати: КОЛИ ЗАКУПАТИ частинами (Smart DCA) і КОЛИ ПРОДАВАТИ (TP1/TP2/TP3).',
+                  style: TextStyle(color: AppColors.textSecondary, fontSize: 11.5, height: 1.35),
+                ),
+                const SizedBox(height: 14),
+                if (isAnalyzing) ...[
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: LinearProgressIndicator(
+                      value: state.fundamentalProgress > 0 ? state.fundamentalProgress : null,
+                      backgroundColor: AppColors.surfaceVariant,
+                      valueColor: const AlwaysStoppedAnimation<Color>(Color(0xFFF7931A)),
+                      minHeight: 6,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      const SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Color(0xFFF7931A),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          state.fundamentalProgressStatus ?? 'Аналізуємо 365 днів історії базових L1...',
+                          style: const TextStyle(
+                            color: AppColors.accentLight,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else ...[
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent,
+                        foregroundColor: Colors.black,
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(Icons.layers_rounded, size: 20, color: Colors.black),
+                      label: Text(
+                        report == null
+                            ? 'Запустити Аналіз Фундаментальних L1 (365D)'
+                            : 'Оновити Інституційний Аналіз L1 (365D + 1W)',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13.5, color: Colors.black),
+                      ),
+                      onPressed: () => notifier.runFundamentalAnalysis(),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          if (report != null && allCoins.isNotEmpty) ...[
+            // Макро-панель циклу Bitcoin, ротації ETH/BTC & SOL/BTC та розподілу капіталу
+            Container(
+              padding: const EdgeInsets.all(15),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.public_rounded, color: Color(0xFFF7931A), size: 18),
+                      const SizedBox(width: 6),
+                      const Expanded(
+                        child: Text(
+                          'МАКРО-ЦИКЛ РИНКУ ТА АЛОКАЦІЯ БАЗИ',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.7,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        DateFormat('dd.MM HH:mm').format(report.analyzedAt),
+                        style: const TextStyle(color: AppColors.textDisabled, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+                    ),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        report.marketCycleLabel,
+                        style: const TextStyle(
+                          color: AppColors.accentLight,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 4 ключові макро-індикатори циклу
+                  Row(
+                    children: [
+                      _buildRadarSummaryStat(
+                        label: 'BTC Mayer (SMA200)',
+                        value: '${report.btcMayerMultiple.toStringAsFixed(2)}x',
+                        valueColor: report.btcMayerMultiple < 1.0
+                            ? AppColors.greenTask
+                            : (report.btcMayerMultiple > 1.55 ? AppColors.warning : AppColors.textPrimary),
+                      ),
+                      const SizedBox(width: 6),
+                      _buildRadarSummaryStat(
+                        label: 'BTC MVRV (365D)',
+                        value: '${report.btcMvrvProxy.toStringAsFixed(2)}x',
+                        valueColor: report.btcMvrvProxy <= 1.0
+                            ? AppColors.greenTask
+                            : (report.btcMvrvProxy > 1.50 ? AppColors.warning : AppColors.blueTask),
+                      ),
+                      const SizedBox(width: 6),
+                      _buildRadarSummaryStat(
+                        label: 'Крос ETH/BTC',
+                        value: report.ethBtcRatio.toStringAsFixed(4),
+                        valueColor: AppColors.accentLight,
+                      ),
+                      const SizedBox(width: 6),
+                      _buildRadarSummaryStat(
+                        label: 'Ядро L1 / Кеш',
+                        value: '${report.recommendedCoreAllocationPct}% / ${report.recommendedCashPct}%',
+                        valueColor: AppColors.greenTask,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Крос-пари ETH/BTC та SOL/BTC
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 5,
+                    children: [
+                      _buildRadarFunnelChip('ETH/BTC: ${report.ethBtcStatus}'),
+                      _buildRadarFunnelChip('SOL/BTC: ${report.solBtcStatus}'),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  Text(
+                    report.macroStrategySummary,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 12.5,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // Фільтри за фазою: Всі / Час купувати / Утримання / Фіксація
+            Row(
+              children: [
+                _buildFundamentalFilterPill(
+                  index: 0,
+                  label: 'Всі (${allCoins.length})',
+                  activeColor: AppColors.accentLight,
+                ),
+                const SizedBox(width: 5),
+                _buildFundamentalFilterPill(
+                  index: 1,
+                  label: '🟢 Купувати (${buyCoins.length})',
+                  activeColor: AppColors.greenTask,
+                ),
+                const SizedBox(width: 5),
+                _buildFundamentalFilterPill(
+                  index: 2,
+                  label: '🟡 HODL (${holdCoins.length})',
+                  activeColor: AppColors.blueTask,
+                ),
+                const SizedBox(width: 5),
+                _buildFundamentalFilterPill(
+                  index: 3,
+                  label: '🟠 Продаж (${sellCoins.length})',
+                  activeColor: AppColors.warning,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'ФУНДАМЕНТАЛЬНІ АКТИВИ ПЕРШОГО ШАРУ (${filteredCoins.length})',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 0.8,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  '4 знаки після коми',
+                  style: TextStyle(color: AppColors.textDisabled, fontSize: 10.5),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+
+            if (filteredCoins.isEmpty)
+              _buildEmptyState(
+                _fundamentalFilterIndex == 1
+                    ? 'Зараз жодна з фундаментальних L1 монет не перебуває у зоні миттєвої ринкової недооцінки.\nПерегляньте вкладку «Всі» або «🟡 HODL» — для кожної монети розраховано 3 точні лімітні рівні закупки на відкаті.'
+                    : (_fundamentalFilterIndex == 3
+                        ? 'Наразі жодна з фундаментальних монет не перебуває у стадії критичного перегріву. Орієнтири фіксації прибутку (TP1, TP2, TP3) доступні в картці кожної монети.'
+                        : 'У вибраній категорії немає монет.'),
+              )
+            else
+              ...filteredCoins.map((coin) {
+                final livePrice = state.livePrices[coin.symbol.toUpperCase()];
+                final userDca = state.groupedDcaCoins
+                    .where((d) => d.symbol.toUpperCase() == coin.symbol.toUpperCase())
+                    .firstOrNull;
+                final userHolding = state.overview.holdings
+                    .where((h) => h.symbol.toUpperCase() == coin.symbol.toUpperCase())
+                    .firstOrNull;
+
+                return _FundamentalCoinCard(
+                  coin: coin,
+                  livePriceOverride: (livePrice != null && livePrice > 0) ? livePrice : null,
+                  userDcaCoin: userDca,
+                  userHolding: userHolding,
+                  onAddToDca: () => _openAddDcaFromFundamental(coin, notifier),
+                );
+              }),
+          ] else if (!isAnalyzing) ...[
+            _buildEmptyState(
+              'Натисніть кнопку вище, щоб завантажити 365-денну історію базових монет першого рівня (BTC, ETH, SOL, BNB, XRP, SUI, TON, AVAX, ADA, TRX) і розрахувати точні рівні закупки та продажу.',
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFundamentalFilterPill({
+    required int index,
+    required String label,
+    required Color activeColor,
+  }) {
+    final isSelected = _fundamentalFilterIndex == index;
+    return Expanded(
+      child: InkWell(
+        onTap: () => setState(() => _fundamentalFilterIndex = index),
+        borderRadius: BorderRadius.circular(9),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7, horizontal: 4),
+          decoration: BoxDecoration(
+            color: isSelected ? activeColor.withValues(alpha: 0.16) : AppColors.surface,
+            borderRadius: BorderRadius.circular(9),
+            border: Border.all(
+              color: isSelected ? activeColor : AppColors.border,
+              width: isSelected ? 1.2 : 1.0,
+            ),
+          ),
+          alignment: Alignment.center,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? activeColor : AppColors.textSecondary,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
+                fontSize: 10.5,
+              ),
+              maxLines: 1,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _openAddDcaFromFundamental(
+    FundamentalCoinAnalysis coin,
+    CryptoPortfolioNotifier notifier,
+  ) {
+    final entryRef = coin.isBuyRecommended ? coin.currentPrice : coin.buyZone1Price;
+    showDialog(
+      context: context,
+      builder: (ctx) => DcaAddDialog(
+        initialSymbol: coin.symbol,
+        initialPrice: entryRef,
+        initialNotes:
+            'Фундамент L1 [${coin.actionTitleUk}]: '
+            'Драбина закупки: Ордер 1 (${coin.buyZone1SharePct}%) \$${_formatDialogPrice(coin.buyZone1Price)}, '
+            'Ордер 2 (${coin.buyZone2SharePct}%) \$${_formatDialogPrice(coin.buyZone2Price)}, '
+            'Ордер 3 (${coin.buyZone3SharePct}%) \$${_formatDialogPrice(coin.buyZone3Price)}. '
+            'Цілі продажу: TP1 (${coin.tp1SharePct}%) \$${_formatDialogPrice(coin.tp1Price)}, '
+            'TP2 (${coin.tp2SharePct}%) \$${_formatDialogPrice(coin.tp2Price)}, '
+            'TP3 (${coin.tp3SharePct}%) \$${_formatDialogPrice(coin.tp3Price)}.',
+        onAdd: (tx) => notifier.addDcaTransaction(tx),
+      ),
+    );
+  }
 }
 
 class _DcaCoinExpandableCard extends StatefulWidget {
   final DcaGroupedCoin coin;
   final CryptoPortfolioNotifier notifier;
+  final HoldingItem? holdingItem;
 
   const _DcaCoinExpandableCard({
     required this.coin,
     required this.notifier,
+    this.holdingItem,
   });
 
   @override
@@ -2588,14 +3302,60 @@ class _DcaCoinExpandableCard extends StatefulWidget {
 class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
   bool _isExpanded = false;
 
+  bool _isBinance(String walletType) {
+    final w = walletType.toUpperCase();
+    return w == 'BINANCE' || w == 'BINANCE SPOT' || w.contains('CONVERT');
+  }
+
+  bool _isWeb3(String walletType) {
+    final w = walletType.toUpperCase();
+    return w.startsWith('WEB3') ||
+        w.contains('ON-CHAIN') ||
+        w.contains('METAMASK') ||
+        w.contains('EVM') ||
+        w.contains('SOLANA') ||
+        w == 'BTC';
+  }
+
+  bool _isManual(String walletType) {
+    return !_isBinance(walletType) && !_isWeb3(walletType);
+  }
+
   @override
   Widget build(BuildContext context) {
     final coin = widget.coin;
-    final isPositive = coin.pnlUsd >= 0;
+    final isPositive = coin.pnlPct >= 0;
     final pnlColor = isPositive ? AppColors.greenTask : AppColors.redTask;
 
-    final hasBinance = coin.tranches.any((t) => t.walletType == 'Binance Spot' || t.walletType == 'BINANCE');
-    final hasManual = coin.tranches.any((t) => t.walletType != 'Binance Spot' && t.walletType != 'BINANCE');
+    final hasBinance = coin.tranches.any((t) => _isBinance(t.walletType));
+    final hasWeb3 = coin.tranches.any((t) => _isWeb3(t.walletType));
+    final hasManual = coin.tranches.any((t) => _isManual(t.walletType));
+
+    final String badgeLabel;
+    final Color badgeColor;
+    final Color badgeBg;
+
+    if (hasWeb3 && !hasBinance && !hasManual) {
+      badgeLabel = 'Web3 On-chain';
+      badgeColor = AppColors.accentLight;
+      badgeBg = AppColors.accent.withValues(alpha: 0.15);
+    } else if (hasBinance && !hasWeb3 && !hasManual) {
+      badgeLabel = 'Binance';
+      badgeColor = const Color(0xFFF3BA2F);
+      badgeBg = const Color(0xFFF3BA2F).withValues(alpha: 0.15);
+    } else if (hasManual && !hasBinance && !hasWeb3) {
+      badgeLabel = 'Ручна';
+      badgeColor = AppColors.greenTask;
+      badgeBg = AppColors.greenTask.withValues(alpha: 0.15);
+    } else {
+      final parts = <String>[];
+      if (hasBinance) parts.add('Binance');
+      if (hasWeb3) parts.add('Web3');
+      if (hasManual) parts.add('Ручна');
+      badgeLabel = parts.join(' + ');
+      badgeColor = AppColors.accentLight;
+      badgeBg = AppColors.accent.withValues(alpha: 0.15);
+    }
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
@@ -2634,50 +3394,35 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                       ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: Row(
+                        child: Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 6,
+                          runSpacing: 4,
                           children: [
-                            Flexible(
-                              child: Text(
-                                coin.symbol,
-                                style: const TextStyle(
-                                  color: AppColors.textPrimary,
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16,
-                                ),
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
+                            Text(
+                              coin.symbol,
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
                               ),
                             ),
-                            const SizedBox(width: 8),
                             // Бейдж джерела
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: (hasBinance && !hasManual)
-                                    ? const Color(0xFFF3BA2F).withValues(alpha: 0.15)
-                                    : (!hasBinance && hasManual)
-                                        ? AppColors.surfaceVariant
-                                        : AppColors.accent.withValues(alpha: 0.15),
+                                color: badgeBg,
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                (hasBinance && !hasManual)
-                                    ? 'Binance'
-                                    : (!hasBinance && hasManual)
-                                        ? 'Ручна'
-                                        : 'Binance + Ручна',
+                                badgeLabel,
                                 style: TextStyle(
-                                  color: (hasBinance && !hasManual)
-                                      ? const Color(0xFFF3BA2F)
-                                      : (!hasBinance && hasManual)
-                                          ? AppColors.textSecondary
-                                          : AppColors.accentLight,
+                                  color: badgeColor,
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
                                 ),
                               ),
                             ),
-                            const SizedBox(width: 6),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                               decoration: BoxDecoration(
@@ -2717,20 +3462,24 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Row(
-                                children: [
-                                  Icon(Icons.shopping_bag_outlined, size: 12, color: AppColors.accentLight),
-                                  SizedBox(width: 4),
-                                  Text(
-                                    'ЦІНА ЗАКУПКИ',
-                                    style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 0.4,
+                              const FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.shopping_bag_outlined, size: 12, color: AppColors.accentLight),
+                                    SizedBox(width: 4),
+                                    Text(
+                                      'ЦІНА ЗАКУПКИ',
+                                      style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 0.4,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                               const SizedBox(height: 3),
                               FittedBox(
@@ -2746,9 +3495,13 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              Text(
-                                'Вкладено: \$${_formatPrice(coin.totalCost)}',
-                                style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  'Вкладено: \$${_formatMoney(coin.totalCost)}',
+                                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                                ),
                               ),
                             ],
                           ),
@@ -2756,7 +3509,7 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
 
                         // Центральний роздільник зі стрілкою
                         Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          padding: const EdgeInsets.symmetric(horizontal: 6),
                           child: Icon(
                             Icons.arrow_forward_rounded,
                             size: 16,
@@ -2769,25 +3522,29 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  const Text(
-                                    'ПОТОЧНА ЦІНА',
-                                    style: TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      letterSpacing: 0.4,
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerRight,
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.end,
+                                  children: [
+                                    const Text(
+                                      'ПОТОЧНА ЦІНА',
+                                      style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        letterSpacing: 0.4,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(width: 4),
-                                  Icon(
-                                    isPositive ? Icons.trending_up_rounded : Icons.trending_down_rounded,
-                                    size: 12,
-                                    color: pnlColor,
-                                  ),
-                                ],
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      isPositive ? Icons.trending_up_rounded : Icons.trending_down_rounded,
+                                      size: 12,
+                                      color: pnlColor,
+                                    ),
+                                  ],
+                                ),
                               ),
                               const SizedBox(height: 3),
                               FittedBox(
@@ -2803,9 +3560,13 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                                 ),
                               ),
                               const SizedBox(height: 2),
-                              Text(
-                                'Вартість: \$${_formatPrice(coin.totalValueUsd)}',
-                                style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerRight,
+                                child: Text(
+                                  'Вартість: \$${_formatMoney(coin.totalValueUsd)}',
+                                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                                ),
                               ),
                             ],
                           ),
@@ -2819,7 +3580,7 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Flexible(
+                      Expanded(
                         child: Text(
                           'Кількість: ${_formatAmount(coin.totalAmount)} ${coin.symbol}',
                           style: const TextStyle(
@@ -2832,24 +3593,37 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: pnlColor.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(6),
-                          border: Border.all(color: pnlColor.withValues(alpha: 0.3)),
-                        ),
-                        child: Text(
-                          '${isPositive ? '+' : ''}${coin.pnlPct.toStringAsFixed(2)}% (${isPositive ? '+' : '-'}\$${coin.pnlUsd.abs().toStringAsFixed(2)})',
-                          style: TextStyle(
-                            color: pnlColor,
-                            fontWeight: FontWeight.bold,
-                            fontSize: 11,
+                      Flexible(
+                        child: FittedBox(
+                          fit: BoxFit.scaleDown,
+                          alignment: Alignment.centerRight,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: pnlColor.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: pnlColor.withValues(alpha: 0.3)),
+                            ),
+                            child: Text(
+                              '${isPositive ? '+' : ''}${coin.pnlPct.toStringAsFixed(2)}% (${_formatPnlUsd(coin.pnlUsd)})',
+                              style: TextStyle(
+                                color: pnlColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ],
                   ),
+                  if (widget.holdingItem != null &&
+                      widget.holdingItem!.tpSl.stopLoss > 0 &&
+                      !const {'USDT', 'USDC', 'FDUSD', 'DAI', 'BUSD', 'TUSD'}
+                          .contains(coin.symbol.toUpperCase())) ...[
+                    const SizedBox(height: 10),
+                    _buildFixationExitStrip(context, widget.holdingItem!),
+                  ],
                 ],
               ),
             ),
@@ -2867,27 +3641,41 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Text(
-                        'АКТИВНІ ПОКУПКИ (FIFO ЗАЛИШКИ)',
-                        style: TextStyle(
-                          color: AppColors.textSecondary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          letterSpacing: 0.6,
+                      const Flexible(
+                        child: Text(
+                          'АКТИВНІ ПОКУПКИ (FIFO ЗАЛИШКИ)',
+                          style: TextStyle(
+                            color: AppColors.textSecondary,
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.6,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      Text(
-                        'Зараз: \$${_formatPrice(coin.currentPrice)}',
-                        style: const TextStyle(
-                          color: AppColors.accentLight,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w600,
+                      const SizedBox(width: 8),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          'Зараз: \$${_formatPrice(coin.currentPrice)}',
+                          style: const TextStyle(
+                            color: AppColors.accentLight,
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  ...coin.tranches.map((t) => _buildTrancheRow(t)),
+                  ...coin.tranches.asMap().entries.map((entry) => _buildTrancheRow(
+                        entry.value,
+                        entry.key + 1,
+                        coin.tranches.length,
+                        coin.symbol,
+                      )),
                 ],
               ),
             ),
@@ -2897,153 +3685,506 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
     );
   }
 
-  Widget _buildTrancheRow(DcaTrancheItem t) {
+  Widget _buildTrancheRow(DcaTrancheItem t, int index, int totalTranches, String symbol) {
     final isPos = t.pnlPct >= 0;
     final color = isPos ? AppColors.greenTask : AppColors.redTask;
-    final isBinance = t.walletType == 'Binance Spot' || t.walletType == 'BINANCE';
+    final isBinance = _isBinance(t.walletType);
+    final isWeb3 = _isWeb3(t.walletType);
     final isConvert = t.notes.contains('Convert');
     final isFallback = t.id.startsWith('binance_balance_');
+    final isAutoWeb3 = t.id.startsWith('web3_auto_');
+
+    final String trancheLabel;
+    final Color trancheColor;
+    final Color trancheBg;
+
+    if (isBinance) {
+      if (isConvert) {
+        trancheLabel = 'Binance Convert';
+        trancheColor = AppColors.accentLight;
+        trancheBg = AppColors.accent.withValues(alpha: 0.15);
+      } else if (isFallback) {
+        trancheLabel = 'Binance Spot';
+        trancheColor = const Color(0xFFF3BA2F);
+        trancheBg = const Color(0xFFF3BA2F).withValues(alpha: 0.15);
+      } else {
+        trancheLabel = 'Binance Spot';
+        trancheColor = const Color(0xFFF3BA2F);
+        trancheBg = const Color(0xFFF3BA2F).withValues(alpha: 0.15);
+      }
+    } else if (isWeb3) {
+      final wUpper = t.walletType.toUpperCase();
+      if (wUpper.contains('BITCOIN') || t.symbol == 'BTC') {
+        trancheLabel = 'Web3 · Bitcoin On-chain';
+        trancheColor = const Color(0xFFF7931A);
+        trancheBg = const Color(0xFFF7931A).withValues(alpha: 0.15);
+      } else if (wUpper.contains('METAMASK') || wUpper.contains('EVM') || t.symbol == 'ETH') {
+        trancheLabel = 'Web3 · MetaMask (EVM)';
+        trancheColor = const Color(0xFF627EEA);
+        trancheBg = const Color(0xFF627EEA).withValues(alpha: 0.15);
+      } else if (wUpper.contains('SOLANA') || t.symbol == 'SOL') {
+        trancheLabel = 'Web3 · Solana';
+        trancheColor = const Color(0xFF14F195);
+        trancheBg = const Color(0xFF14F195).withValues(alpha: 0.15);
+      } else {
+        trancheLabel = 'Web3 On-chain';
+        trancheColor = AppColors.accentLight;
+        trancheBg = AppColors.accent.withValues(alpha: 0.15);
+      }
+    } else {
+      trancheLabel = 'Ручна DCA';
+      trancheColor = AppColors.greenTask;
+      trancheBg = AppColors.greenTask.withValues(alpha: 0.15);
+    }
+
+    final double trancheInvested = (t.amount * t.buyPrice) + t.fee;
+    final double trancheCurrentVal = t.amount * t.currentPrice;
 
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      margin: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Ліва колонка: Джерело, дата, кількість, ціна закупки
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Row(
+          // Рядок 1: Верхня шапка партії - Бейджі зліва, PnL та дія справа
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Wrap(
+                  spacing: 5,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: isBinance
-                            ? (isConvert
-                                ? AppColors.accent.withValues(alpha: 0.15)
-                                : const Color(0xFFF3BA2F).withValues(alpha: 0.15))
-                            : AppColors.surfaceVariant,
+                        color: trancheBg,
                         borderRadius: BorderRadius.circular(4),
                       ),
                       child: Text(
-                        isBinance
-                            ? (isConvert ? 'Convert' : (isFallback ? 'Актив гаманця' : 'Binance Spot'))
-                            : 'Ручна DCA',
+                        trancheLabel,
                         style: TextStyle(
-                          color: isBinance
-                              ? (isConvert ? AppColors.accentLight : const Color(0xFFF3BA2F))
-                              : AppColors.textSecondary,
-                          fontSize: 9,
+                          color: trancheColor,
+                          fontSize: 9.5,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Flexible(
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceVariant,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
                       child: Text(
-                        _formatDate(t.date),
-                        style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 6),
-                Row(
-                  children: [
-                    Text(
-                      '${_formatAmount(t.amount)} шт',
-                      style: const TextStyle(
-                        color: AppColors.textPrimary,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Flexible(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceVariant,
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Text(
-                          'Ціна закупки: \$${_formatPrice(t.buyPrice)}',
-                          style: const TextStyle(
-                            color: AppColors.accentLight,
-                            fontSize: 11,
-                            fontWeight: FontWeight.bold,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        totalTranches > 1 ? 'Партія #$index з $totalTranches' : 'Партія #$index',
+                        style: const TextStyle(
+                          color: AppColors.textPrimary,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  'Разом закупка: \$${((t.amount * t.buyPrice) + t.fee).toStringAsFixed(2)} · Зараз ринок: \$${_formatPrice(t.currentPrice)}',
-                  style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 8),
-
-          // Права колонка: Індивідуальний PnL з відсотками росту/падіння від ціни покупки
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  '${isPos ? '+' : ''}${t.pnlPct.toStringAsFixed(2)}%',
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
                 ),
               ),
-              const SizedBox(height: 3),
-              Text(
-                '${isPos ? '+' : '-'}\$${t.pnlUsd.abs().toStringAsFixed(2)}',
-                style: TextStyle(
-                  color: color,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w600,
+              const SizedBox(width: 6),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(5),
+                      ),
+                      child: Text(
+                        '${isPos ? '+' : ''}${t.pnlPct.toStringAsFixed(2)}% (${_formatPnlUsd(t.pnlUsd)})',
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (!isBinance && !isAutoWeb3) ...[
+                    const SizedBox(width: 4),
+                    IconButton(
+                      icon: const Icon(Icons.close_rounded, color: AppColors.textDisabled, size: 16),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      onPressed: () => widget.notifier.deleteDcaTransaction(t.id),
+                      tooltip: 'Видалити покупку',
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+
+          // Дата покупки (окремим акуратним рядком, щоб ніколи не вилазити за межі)
+          Row(
+            children: [
+              const Icon(Icons.access_time_rounded, size: 11, color: AppColors.textDisabled),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  _formatDate(t.date),
+                  style: const TextStyle(color: AppColors.textSecondary, fontSize: 10),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
           ),
-          if (!isBinance) ...[
-            const SizedBox(width: 4),
-            IconButton(
-              icon: const Icon(Icons.close_rounded, color: AppColors.textDisabled, size: 16),
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
-              onPressed: () => widget.notifier.deleteDcaTransaction(t.id),
-              tooltip: 'Видалити',
+          const SizedBox(height: 9),
+
+          // Рядок 2: ЖОВТИМ ОБВЕДЕНА ЦІНА ЗАКУПКИ ТА КІЛЬКІСТЬ ЦІЄЇ ПАРТІЇ
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF3BA2F).withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: const Color(0xFFF3BA2F), // Чітка жовта рамка для ціни закупки!
+                width: 1.5,
+              ),
+            ),
+            child: Row(
+              children: [
+                // Ліва колонка: Ціна закупки цієї партії
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Row(
+                          children: [
+                            Icon(Icons.sell_outlined, size: 12, color: Color(0xFFF3BA2F)),
+                            SizedBox(width: 4),
+                            Text(
+                              'ЦІНА ЗАКУПКИ ПАРТІЇ',
+                              style: TextStyle(
+                                color: Color(0xFFF3BA2F),
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '\$${_formatPrice(t.buyPrice)}',
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16.5,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Вертикальний золотий роздільник
+                Container(
+                  height: 32,
+                  width: 1,
+                  color: const Color(0xFFF3BA2F).withValues(alpha: 0.35),
+                  margin: const EdgeInsets.symmetric(horizontal: 10),
+                ),
+
+                // Права колонка: Кількість монет у цій партії
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Icon(Icons.inventory_2_outlined, size: 12, color: AppColors.textSecondary),
+                            SizedBox(width: 4),
+                            Text(
+                              'ЗАКУПЛЕНО ЗА РАЗ',
+                              style: TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.4,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          '${_formatAmount(t.amount)} $symbol',
+                          style: const TextStyle(
+                            color: AppColors.accentLight,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // Рядок 3: Підсумки партії (Вкладено грошей -> Поточна ринкова вартість)
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'Вкладено: \$${_formatMoney(trancheInvested)}${t.fee > 0 ? ' (комісія: \$${_formatMoney(t.fee)})' : ''}',
+                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 10.5),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    'Вартість зараз: \$${_formatMoney(trancheCurrentVal)}',
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          if (t.notes.isNotEmpty && !t.notes.startsWith('Синхронізовано') && !t.notes.startsWith('Автоматичний')) ...[
+            const SizedBox(height: 4),
+            Text(
+              t.notes,
+              style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5, fontStyle: FontStyle.italic),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildFixationExitStrip(BuildContext context, HoldingItem h) {
+    final t = h.tpSl;
+    Color accent;
+    IconData icon;
+
+    switch (t.exitSignalCode) {
+      case 'SELL_PEAK_NOW':
+        accent = const Color(0xFFF3BA2F);
+        icon = Icons.local_fire_department_rounded;
+        break;
+      case 'TRAILING_STOP_HIT':
+        accent = AppColors.warning;
+        icon = Icons.lock_clock_rounded;
+        break;
+      case 'TAKE_PARTIAL_TP1':
+        accent = AppColors.greenTask;
+        icon = Icons.verified_rounded;
+        break;
+      case 'PRE_STOP_DANGER':
+        accent = AppColors.redTask;
+        icon = Icons.warning_amber_rounded;
+        break;
+      default:
+        accent = t.slProbabilityPct >= 50
+            ? AppColors.warning
+            : AppColors.accentLight;
+        icon = Icons.shield_outlined;
+    }
+
+    final sellAmountCoins =
+        widget.coin.totalAmount * (t.recommendedSellPct / 100.0);
+    final sellValueUsd =
+        widget.coin.totalValueUsd * (t.recommendedSellPct / 100.0);
+
+    return InkWell(
+      onTap: () {
+        showDialog(
+          context: context,
+          builder: (_) => TpSlDialog(holding: h),
+        );
+      },
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        decoration: BoxDecoration(
+          color: accent.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: accent.withValues(alpha: 0.45)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 15, color: accent),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    t.exitTitleUk,
+                    style: TextStyle(
+                      color: accent,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 11.5,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 4),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.surfaceVariant,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'План виходу',
+                        style: TextStyle(
+                          color: AppColors.textSecondary,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      SizedBox(width: 2),
+                      Icon(
+                        Icons.open_in_new_rounded,
+                        size: 10,
+                        color: AppColors.textSecondary,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            if (t.recommendedSellPct > 0 && widget.coin.totalAmount > 0) ...[
+              const SizedBox(height: 4),
+              Text(
+                'Рекомендовано продати зараз: ${t.recommendedSellPct}% (${_formatAmount(sellAmountCoins)} ${widget.coin.symbol} ≈ \$${_formatMoney(sellValueUsd)})',
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ],
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              children: [
+                _buildMiniExitPill(
+                  label: 'TP1 (${t.tp1Pct >= 0 ? '+' : ''}${t.tp1Pct.toStringAsFixed(1)}%)',
+                  value: '\$${_formatPrice(t.tp1)}',
+                  color: AppColors.greenTask,
+                ),
+                if (t.trailingStopPrice > 0)
+                  _buildMiniExitPill(
+                    label: 'Трейлінг',
+                    value: '\$${_formatPrice(t.trailingStopPrice)}',
+                    color: AppColors.accentLight,
+                  ),
+                if (t.earlyExitPrice > 0)
+                  _buildMiniExitPill(
+                    label: 'Пре-Стоп',
+                    value: '\$${_formatPrice(t.earlyExitPrice)}',
+                    color: AppColors.warning,
+                  ),
+                _buildMiniExitPill(
+                  label: 'Ризик SL',
+                  value: '${t.slProbabilityPct.toStringAsFixed(0)}%',
+                  color: t.slProbabilityPct >= 60
+                      ? AppColors.redTask
+                      : t.slProbabilityPct >= 35
+                          ? AppColors.warning
+                          : AppColors.greenTask,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniExitPill({
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
+      decoration: BoxDecoration(
+        color: AppColors.surface.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: RichText(
+        text: TextSpan(
+          style: const TextStyle(fontSize: 9.5),
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: const TextStyle(color: AppColors.textSecondary),
+            ),
+            TextSpan(
+              text: value,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -3054,15 +4195,42 @@ class _DcaCoinExpandableCardState extends State<_DcaCoinExpandableCard> {
     return amt.toStringAsFixed(6).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
   }
 
-  String _formatPrice(double val) {
-    if (val >= 1000) {
-      return NumberFormat('#,##0.00', 'en_US').format(val);
-    } else if (val >= 1) {
-      return val.toStringAsFixed(2);
-    } else if (val > 0) {
-      return val.toStringAsFixed(4);
+  String _formatPnlUsd(double pnl) {
+    if (pnl == 0.0) return '\$0.00';
+    final sign = pnl >= 0 ? '+' : '-';
+    final abs = pnl.abs();
+    if (abs >= 1000) {
+      return '$sign\$${NumberFormat('#,##0.00', 'en_US').format(abs)}';
+    } else if (abs >= 0.01) {
+      return '$sign\$${abs.toStringAsFixed(2)}';
     } else {
-      return '0.00';
+      return '$sign\$${abs.toStringAsFixed(4)}';
+    }
+  }
+
+  String _formatMoney(double val) {
+    if (val == 0) return '0.00';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.00', 'en_US').format(abs)}';
+    } else if (abs >= 0.01) {
+      return '$sign${abs.toStringAsFixed(2)}';
+    } else {
+      return '$sign${abs.toStringAsFixed(4)}';
+    }
+  }
+
+  String _formatPrice(double val) {
+    if (val == 0) return '0.0000';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.0000', 'en_US').format(abs)}';
+    } else if (abs >= 0.0001) {
+      return '$sign${abs.toStringAsFixed(4)}';
+    } else {
+      return '$sign${abs.toStringAsFixed(6)}';
     }
   }
 
@@ -3094,15 +4262,42 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
         ? AppColors.greenTask
         : (opp.confidenceScore >= 60 ? AppColors.blueTask : AppColors.warning);
 
-    final tp1Pct = opp.currentPrice > 0
-        ? ((opp.targetPrice1 - opp.currentPrice) / opp.currentPrice) * 100.0
-        : 25.0;
-    final tp2Pct = opp.currentPrice > 0
-        ? ((opp.targetPrice2 - opp.currentPrice) / opp.currentPrice) * 100.0
-        : 55.0;
-    final slPct = opp.currentPrice > 0
-        ? ((opp.currentPrice - opp.stopLoss) / opp.currentPrice) * 100.0
-        : 10.0;
+    final tp1Pct = opp.tp1Pct > 0
+        ? opp.tp1Pct
+        : (opp.currentPrice > 0 ? ((opp.targetPrice1 - opp.currentPrice) / opp.currentPrice) * 100.0 : 20.0);
+    final tp2Pct = opp.tp2Pct > 0
+        ? opp.tp2Pct
+        : (opp.currentPrice > 0 ? ((opp.targetPrice2 - opp.currentPrice) / opp.currentPrice) * 100.0 : 40.0);
+    final slPct = opp.slPct > 0
+        ? opp.slPct
+        : (opp.currentPrice > 0 ? ((opp.currentPrice - opp.stopLoss) / opp.currentPrice) * 100.0 : 10.0);
+
+    // Колір та текст статусу точки входу
+    final (Color statusColor, IconData statusIcon, String statusLabel) = switch (opp.entryStatus) {
+      RadarEntryStatus.waitBreakout => (
+          AppColors.blueTask,
+          Icons.trending_up_rounded,
+          'STOP-LIMIT НА ПРОБІЙ \$${_formatPrice(opp.triggerPrice)}',
+        ),
+      RadarEntryStatus.waitPullback => (
+          AppColors.warning,
+          Icons.hourglass_bottom_rounded,
+          'ЧЕКАТИ ВІДКАТ · ЛІМІТКА \$${_formatPrice(opp.triggerPrice)}',
+        ),
+      _ => (
+          AppColors.greenTask,
+          Icons.check_circle_outline_rounded,
+          'КУПУВАТИ ЗАРАЗ · У ЗОНІ ВХОДУ',
+        ),
+    };
+
+    final hasFactorScores = (opp.scoreMomentum +
+            opp.scoreTrend +
+            opp.scoreFlow +
+            opp.scoreContraction +
+            opp.scoreEntry +
+            opp.scoreRiskReward) >
+        0;
 
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 6),
@@ -3115,7 +4310,7 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
       ),
       child: Column(
         children: [
-          // Шапка картки: назва монети, сетап, поточна ціна, індекс Quant Score
+          // Шапка картки: назва монети, сетап, статус входу, поточна ціна, індекс Quant Score
           InkWell(
             onTap: () => setState(() => _isExpanded = !_isExpanded),
             borderRadius: BorderRadius.circular(16),
@@ -3147,11 +4342,13 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                               children: [
                                 Flexible(
                                   child: Text(
-                                    opp.symbol,
+                                    (opp.name.isNotEmpty && opp.name.toUpperCase() != opp.symbol.toUpperCase())
+                                        ? '${opp.symbol} · ${opp.name}'
+                                        : opp.symbol,
                                     style: const TextStyle(
                                       color: AppColors.textPrimary,
                                       fontWeight: FontWeight.bold,
-                                      fontSize: 16,
+                                      fontSize: 15.5,
                                     ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -3166,13 +4363,17 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                                   ),
                                   child: Text(
                                     opp.sector.isNotEmpty ? opp.sector : 'Spot',
-                                    style: const TextStyle(color: AppColors.textSecondary, fontSize: 9, fontWeight: FontWeight.bold),
+                                    style: const TextStyle(
+                                      color: AppColors.textSecondary,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
                                   ),
                                 ),
                               ],
                             ),
                             const SizedBox(height: 3),
-                            // Бейдж архетипу сетапу (Order Flow / Дивергенція / Пружина Вайкоффа)
+                            // Бейдж архетипу сетапу
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
@@ -3217,7 +4418,7 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
-                              'Alpha: ${opp.confidenceScore}/100',
+                              'Quant: ${opp.confidenceScore}/100',
                               style: TextStyle(
                                 color: confidenceColor,
                                 fontWeight: FontWeight.bold,
@@ -3229,36 +4430,117 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 9),
 
-                  // 4-колонковий рядок квантових метрик: Дисконт, RSI, Taker Buy, R:R
+                  // Смуга дії: Статус входу (КУПУВАТИ ЗАРАЗ / ЛІМІТКА / ПРОБІЙ) + Рекомендований розмір позиції
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: statusColor.withValues(alpha: 0.11),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: statusColor.withValues(alpha: 0.35)),
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(statusIcon, size: 14, color: statusColor),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              statusLabel,
+                              style: TextStyle(
+                                color: statusColor,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (opp.positionSizePct > 0) ...[
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.surface,
+                              borderRadius: BorderRadius.circular(5),
+                            ),
+                            child: Text(
+                              opp.positionSizeUsd > 0
+                                  ? 'Алокація: ${opp.positionSizePct.toStringAsFixed(1)}% (~\$${opp.positionSizeUsd.toStringAsFixed(0)})'
+                                  : 'Алокація: ${opp.positionSizePct.toStringAsFixed(1)}% депо',
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 9),
+
+                  // 4-колонковий рядок квантових метрик v3: RS vs BTC, Order Flow Δ, Hit-Rate TP1, Зважений R:R
                   Row(
                     children: [
                       _buildMetricTile(
-                        label: 'Дисконт 90D',
-                        value: '-${opp.dropFromPeakPct.toStringAsFixed(1)}%',
-                        valueColor: AppColors.redTask,
+                        label: 'RS vs BTC (30D)',
+                        value: '${opp.rsVsBtc30d >= 0 ? '+' : ''}${opp.rsVsBtc30d.toStringAsFixed(1)}%',
+                        valueColor: opp.rsVsBtc30d >= 0 ? AppColors.greenTask : AppColors.redTask,
                       ),
                       const SizedBox(width: 4),
                       _buildMetricTile(
-                        label: 'RSI (14D)',
-                        value: opp.rsi.toStringAsFixed(1),
-                        valueColor: opp.rsi <= 42 ? AppColors.greenTask : AppColors.textPrimary,
+                        label: 'Order Flow Δ',
+                        value: '${opp.takerDeltaPp >= 0 ? '+' : ''}${opp.takerDeltaPp.toStringAsFixed(1)} п.п.',
+                        valueColor: opp.takerDeltaPp >= 0.5
+                            ? AppColors.greenTask
+                            : (opp.takerDeltaPp < -0.5 ? AppColors.redTask : AppColors.textPrimary),
                       ),
                       const SizedBox(width: 4),
                       _buildMetricTile(
-                        label: 'Викуп (Taker)',
-                        value: '${opp.takerBuyRatioPct.toStringAsFixed(1)}%',
-                        valueColor: opp.takerBuyRatioPct >= 51.5 ? AppColors.greenTask : AppColors.textPrimary,
+                        label: 'Істор. Hit TP1',
+                        value: opp.tp1HitRatePct >= 0
+                            ? '${opp.tp1HitRatePct.toStringAsFixed(0)}% (${opp.historicalSamples})'
+                            : 'RSI ${opp.rsi.toStringAsFixed(0)}',
+                        valueColor: opp.tp1HitRatePct >= 52
+                            ? AppColors.greenTask
+                            : (opp.tp1HitRatePct >= 0 && opp.tp1HitRatePct < 40
+                                ? AppColors.warning
+                                : AppColors.textPrimary),
                       ),
                       const SizedBox(width: 4),
                       _buildMetricTile(
-                        label: 'R:R Профіт',
-                        value: opp.riskRewardRatio > 0 ? '1:${opp.riskRewardRatio.toStringAsFixed(1)}' : opp.riskLevel,
+                        label: 'R:R · Очік. EV',
+                        value: opp.blendedRR > 0
+                            ? '1:${opp.blendedRR.toStringAsFixed(1)} (${opp.expectancyPct >= 0 ? '+' : ''}${opp.expectancyPct.toStringAsFixed(1)}%)'
+                            : '1:${opp.riskRewardRatio.toStringAsFixed(1)}',
                         valueColor: AppColors.accentLight,
                       ),
                     ],
                   ),
+
+                  // 6-факторна шкала декомпозиції Quant Score
+                  if (hasFactorScores) ...[
+                    const SizedBox(height: 7),
+                    Row(
+                      children: [
+                        _buildFactorChip('Імп', opp.scoreMomentum),
+                        const SizedBox(width: 3),
+                        _buildFactorChip('Тренд', opp.scoreTrend),
+                        const SizedBox(width: 3),
+                        _buildFactorChip('Flow', opp.scoreFlow),
+                        const SizedBox(width: 3),
+                        _buildFactorChip('Стисн', opp.scoreContraction),
+                        const SizedBox(width: 3),
+                        _buildFactorChip('Вхід', opp.scoreEntry),
+                        const SizedBox(width: 3),
+                        _buildFactorChip('R:R', opp.scoreRiskReward),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -3273,7 +4555,7 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // 1. Рядок: Зона входу DCA та Захисний Стоп-Лос
+                // 1. Рядок: Зона входу DCA та Захисний Стоп-Лос + Тайм-стоп
                 Row(
                   children: [
                     // Зона DCA
@@ -3287,14 +4569,18 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                         ),
                         child: Row(
                           children: [
-                            const Text('DCA: ', style: TextStyle(color: AppColors.textDisabled, fontSize: 10)),
+                            const Text('Вхід: ', style: TextStyle(color: AppColors.textDisabled, fontSize: 10)),
                             Expanded(
                               child: FittedBox(
                                 fit: BoxFit.scaleDown,
                                 alignment: Alignment.centerLeft,
                                 child: Text(
                                   '\$${_formatPrice(opp.entryZoneMin)} – \$${_formatPrice(opp.entryZoneMax)}',
-                                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 11, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                    color: AppColors.textPrimary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
                             ),
@@ -3314,14 +4600,21 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                         ),
                         child: Row(
                           children: [
-                            const Text('SL: ', style: TextStyle(color: AppColors.redTask, fontSize: 10, fontWeight: FontWeight.bold)),
+                            const Text(
+                              'SL: ',
+                              style: TextStyle(color: AppColors.redTask, fontSize: 10, fontWeight: FontWeight.bold),
+                            ),
                             Expanded(
                               child: FittedBox(
                                 fit: BoxFit.scaleDown,
                                 alignment: Alignment.centerLeft,
                                 child: Text(
-                                  '\$${_formatPrice(opp.stopLoss)} (-${slPct.toStringAsFixed(1)}%)',
-                                  style: const TextStyle(color: AppColors.redTask, fontSize: 11, fontWeight: FontWeight.bold),
+                                  '\$${_formatPrice(opp.stopLoss)} (-${slPct.toStringAsFixed(1)}%) · ${opp.timeStopDays}д',
+                                  style: const TextStyle(
+                                    color: AppColors.redTask,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                               ),
                             ),
@@ -3345,14 +4638,21 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                     children: [
                       const Icon(Icons.flag_outlined, size: 13, color: AppColors.greenTask),
                       const SizedBox(width: 5),
-                      const Text('Тейки: ', style: TextStyle(color: AppColors.greenTask, fontSize: 10, fontWeight: FontWeight.bold)),
+                      const Text(
+                        'Цілі: ',
+                        style: TextStyle(color: AppColors.greenTask, fontSize: 10, fontWeight: FontWeight.bold),
+                      ),
                       Expanded(
                         child: FittedBox(
                           fit: BoxFit.scaleDown,
                           alignment: Alignment.centerLeft,
                           child: Text(
-                            'TP1 \$${_formatPrice(opp.targetPrice1)} (+${tp1Pct.toStringAsFixed(0)}%)   ·   TP2 \$${_formatPrice(opp.targetPrice2)} (+${tp2Pct.toStringAsFixed(0)}%)',
-                            style: const TextStyle(color: AppColors.greenTask, fontSize: 11, fontWeight: FontWeight.bold),
+                            'TP1 \$${_formatPrice(opp.targetPrice1)} (+${tp1Pct.toStringAsFixed(1)}%)   ·   TP2 \$${_formatPrice(opp.targetPrice2)} (+${tp2Pct.toStringAsFixed(1)}%)',
+                            style: const TextStyle(
+                              color: AppColors.greenTask,
+                              fontSize: 11,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ),
@@ -3382,7 +4682,9 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                               const SizedBox(width: 4),
                               Flexible(
                                 child: Text(
-                                  _isExpanded ? 'Згорнути план' : 'Деталі плану & TP/SL',
+                                  _isExpanded
+                                      ? 'Згорнути торговий план'
+                                      : 'Детальний план, Бектест & Ризики${opp.warnings.isNotEmpty ? ' (${opp.warnings.length} ⚠️)' : ''}',
                                   style: const TextStyle(
                                     color: AppColors.accentLight,
                                     fontSize: 11.5,
@@ -3425,7 +4727,7 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
             ),
           ),
 
-          // Розгорнута секція: Повний торговий план + Умови Тейк-Профіту та Стоп-Лосу
+          // Розгорнута секція: AI-Коментар, Попередження, Повний торговий план + Умови TP/SL
           if (_isExpanded) ...[
             Container(
               padding: const EdgeInsets.all(14),
@@ -3439,29 +4741,67 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 1. Технічний аналіз
+                  // AI-коментар (якщо присутній)
+                  if (opp.aiCommentary.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+                      ),
+                      child: _buildAnalysisBlock(
+                        icon: Icons.psychology_rounded,
+                        iconColor: AppColors.accentLight,
+                        title: 'РЕЗЮМЕ КВАНТОВОГО AI-АНАЛІТИКА',
+                        content: opp.aiCommentary,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
+                  // Чесні попередження про ризики (якщо є)
+                  if (opp.warnings.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.warning.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.warning.withValues(alpha: 0.35)),
+                      ),
+                      child: _buildAnalysisBlock(
+                        icon: Icons.warning_amber_rounded,
+                        iconColor: AppColors.warning,
+                        title: 'ОБ\'ЄКТИВНІ ФАКТОРИ РИЗИКУ (${opp.warnings.length})',
+                        content: opp.warnings.map((w) => '• $w').join('\n'),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+
+                  // 1. Технічний аналіз (230D)
                   _buildAnalysisBlock(
                     icon: Icons.trending_up_rounded,
                     iconColor: AppColors.blueTask,
-                    title: '1. ТЕХНІЧНА СТРУКТУРА ТА ІНДИКАТОРИ (90D)',
+                    title: '1. ТЕХНІЧНА СТРУКТУРА ТА ВОЛАТИЛЬНІСТЬ (230D)',
                     content: opp.technicalReason,
                   ),
                   const SizedBox(height: 10),
 
-                  // 2. Order Flow та Smart Money
+                  // 2. Відносна сила та Order Flow
                   _buildAnalysisBlock(
                     icon: Icons.bolt_rounded,
                     iconColor: AppColors.warning,
-                    title: '2. ORDER FLOW (TAKER BUY) & ПОГЛИНАННЯ КИТІВ',
+                    title: '2. ВІДНОСНА СИЛА (RS VS BTC) & ORDER FLOW',
                     content: opp.smartMoneyCatalyst,
                   ),
                   const SizedBox(height: 10),
 
-                  // 3. DCA Архітектура входу
+                  // 3. DCA Архітектура входу та розмір позиції
                   _buildAnalysisBlock(
                     icon: Icons.pie_chart_outline_rounded,
                     iconColor: AppColors.accentLight,
-                    title: '3. АРХІТЕКТУРА ВХОДУ ТА ДОБОРУ ПОЗИЦІЇ',
+                    title: '3. ТОЧКА ВХОДУ ТА РОЗМІР ПОЗИЦІЇ',
                     content: opp.dcaStrategy,
                   ),
                   const SizedBox(height: 12),
@@ -3477,10 +4817,10 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                     child: _buildAnalysisBlock(
                       icon: Icons.ads_click_rounded,
                       iconColor: AppColors.greenTask,
-                      title: '4. КОЛИ РОБИТИ ТЕЙК-ПРОФІТ (TP1 / TP2 / ДОСТРОКОВО)',
+                      title: '4. КОЛИ РОБИТИ ТЕЙК-ПРОФІТ (TP1 / TP2 / ТРЕЙЛІНГ)',
                       content: opp.tpTriggerRule.isNotEmpty
                           ? opp.tpTriggerRule
-                          : 'На TP1 (\$${_formatPrice(opp.targetPrice1)}, +${tp1Pct.toStringAsFixed(1)}%) зафіксувати 50% позиції та перевести Stop-Loss у беззбиток. На TP2 (\$${_formatPrice(opp.targetPrice2)}, +${tp2Pct.toStringAsFixed(1)}%) закрити решту або увімкнути трейлінг по EMA 20.',
+                          : 'На TP1 (\$${_formatPrice(opp.targetPrice1)}, +${tp1Pct.toStringAsFixed(1)}%) зафіксувати 50% позиції та перевести Stop-Loss у беззбиток. На TP2 (\$${_formatPrice(opp.targetPrice2)}, +${tp2Pct.toStringAsFixed(1)}%) закрити 30%, залишок 20% вести по денній EMA 20.',
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -3496,10 +4836,10 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
                     child: _buildAnalysisBlock(
                       icon: Icons.shield_outlined,
                       iconColor: AppColors.redTask,
-                      title: '5. КОЛИ РОБИТИ СТОП-ЛОС (ЗАХИСТ ВІД СВІПІВ)',
+                      title: '5. ПРОТОКОЛ СТОП-ЛОСУ (СТРУКТУРНИЙ + АВАРІЙНИЙ + ТАЙМ-СТОП)',
                       content: opp.slTriggerRule.isNotEmpty
                           ? opp.slTriggerRule
-                          : 'Стоп-рівень \$${_formatPrice(opp.stopLoss)} (-${slPct.toStringAsFixed(1)}%) розрахований за структурною підтримкою мінус 1.2×ATR. Вихід тільки при закритті свічки 4H/1D нижче цього рівня.',
+                          : 'Стоп-рівень \$${_formatPrice(opp.stopLoss)} (-${slPct.toStringAsFixed(1)}%). Вихід при закритті денної свічки нижче рівня. Аварійний стоп у стакані: \$${_formatPrice(opp.hardStopPrice > 0 ? opp.hardStopPrice : opp.stopLoss * 0.95)}. Тайм-стоп: ${opp.timeStopDays} днів.',
                     ),
                   ),
                 ],
@@ -3507,6 +4847,36 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildFactorChip(String label, double score) {
+    final s = score.round().clamp(0, 100);
+    final c = s >= 68
+        ? AppColors.greenTask
+        : (s >= 45 ? AppColors.blueTask : AppColors.textSecondary);
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 3, horizontal: 3),
+        decoration: BoxDecoration(
+          color: c.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(5),
+          border: Border.all(color: c.withValues(alpha: 0.25)),
+        ),
+        alignment: Alignment.center,
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            '$label $s',
+            style: TextStyle(
+              color: c,
+              fontSize: 8.5,
+              fontWeight: FontWeight.bold,
+            ),
+            maxLines: 1,
+          ),
+        ),
       ),
     );
   }
@@ -3593,15 +4963,892 @@ class _RadarOpportunityCardState extends State<_RadarOpportunityCard> {
   }
 
   String _formatPrice(double val) {
-    if (val >= 1000) {
-      return NumberFormat('#,##0.00', 'en_US').format(val);
-    } else if (val >= 1) {
-      return val.toStringAsFixed(2);
-    } else if (val > 0) {
-      return val.toStringAsFixed(4);
+    if (val == 0) return '0.0000';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.0000', 'en_US').format(abs)}';
+    } else if (abs >= 0.0001) {
+      return '$sign${abs.toStringAsFixed(4)}';
     } else {
-      return '0.00';
+      return '$sign${abs.toStringAsFixed(6)}';
     }
   }
 }
+
+class _FundamentalCoinCard extends StatefulWidget {
+  final FundamentalCoinAnalysis coin;
+  final double? livePriceOverride;
+  final DcaGroupedCoin? userDcaCoin;
+  final HoldingItem? userHolding;
+  final VoidCallback onAddToDca;
+
+  const _FundamentalCoinCard({
+    required this.coin,
+    this.livePriceOverride,
+    this.userDcaCoin,
+    this.userHolding,
+    required this.onAddToDca,
+  });
+
+  @override
+  State<_FundamentalCoinCard> createState() => _FundamentalCoinCardState();
+}
+
+class _FundamentalCoinCardState extends State<_FundamentalCoinCard> {
+  bool _isExpanded = false;
+
+  Color _brandColor(String sym) {
+    return switch (sym.toUpperCase()) {
+      'BTC' => const Color(0xFFF7931A),
+      'ETH' => const Color(0xFF627EEA),
+      'SOL' => const Color(0xFF14F195),
+      'BNB' => const Color(0xFFF3BA2F),
+      'XRP' => const Color(0xFF38BDF8),
+      'SUI' => const Color(0xFF4DA2FF),
+      'TON' => const Color(0xFF0098EA),
+      'AVAX' => const Color(0xFFE84142),
+      'ADA' => const Color(0xFF3CC8C8),
+      _ => AppColors.accentLight,
+    };
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = widget.coin;
+    final price = widget.livePriceOverride ?? c.currentPrice;
+    final brand = _brandColor(c.symbol);
+
+    final (Color phaseColor, IconData phaseIcon) = switch (c.cyclePhase) {
+      FundamentalCyclePhase.deepValue => (AppColors.greenTask, Icons.diamond_outlined),
+      FundamentalCyclePhase.dcaAccumulation => (AppColors.blueTask, Icons.shopping_cart_checkout_rounded),
+      FundamentalCyclePhase.overheatedTakeProfit => (AppColors.warning, Icons.local_fire_department_rounded),
+      FundamentalCyclePhase.euphoriaSell => (AppColors.redTask, Icons.warning_amber_rounded),
+      _ => (AppColors.accentLight, Icons.shield_outlined),
+    };
+
+    // Розрахунок відсотків до рівнів купівлі та продажу відносно актуальної ціни
+    final buy1DiffPct = price > 0 ? ((c.buyZone1Price - price) / price) * 100.0 : 0.0;
+    final buy2DiffPct = price > 0 ? ((c.buyZone2Price - price) / price) * 100.0 : 0.0;
+    final buy3DiffPct = price > 0 ? ((c.buyZone3Price - price) / price) * 100.0 : 0.0;
+
+    final tp1GainPct = price > 0 ? ((c.tp1Price - price) / price) * 100.0 : 0.0;
+    final tp2GainPct = price > 0 ? ((c.tp2Price - price) / price) * 100.0 : 0.0;
+    final tp3GainPct = price > 0 ? ((c.tp3Price - price) / price) * 100.0 : 0.0;
+
+    // Дані про особисту позицію користувача (якщо монета вже є в портфелі або DCA)
+    final double userAmount = widget.userDcaCoin?.totalAmount ?? widget.userHolding?.amount ?? 0.0;
+    final double userEntry = widget.userDcaCoin?.avgEntryPrice ?? widget.userHolding?.avgEntryPrice ?? 0.0;
+    final bool hasUserPos = userAmount > 0.000001 && userEntry > 0;
+    final double userPnlPct = hasUserPos ? ((price - userEntry) / userEntry) * 100.0 : 0.0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 6),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: _isExpanded ? brand.withValues(alpha: 0.6) : AppColors.border,
+        ),
+      ),
+      child: Column(
+        children: [
+          // 1. Шапка картки: Логотип, Символ, Роль, Поточна ціна та Індекси Закупки / Перегріву
+          InkWell(
+            onTap: () => setState(() => _isExpanded = !_isExpanded),
+            borderRadius: BorderRadius.circular(16),
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 20,
+                        backgroundColor: brand.withValues(alpha: 0.16),
+                        child: Text(
+                          c.symbol.length > 3 ? c.symbol.substring(0, 3) : c.symbol,
+                          style: TextStyle(
+                            color: brand,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    '${c.symbol} · ${c.name}',
+                                    style: const TextStyle(
+                                      color: AppColors.textPrimary,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 16,
+                                    ),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                  decoration: BoxDecoration(
+                                    color: brand.withValues(alpha: 0.15),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: Text(
+                                    'CORE L1',
+                                    style: TextStyle(
+                                      color: brand,
+                                      fontSize: 8.5,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              c.roleLabel,
+                              style: const TextStyle(
+                                color: AppColors.textSecondary,
+                                fontSize: 10.5,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              '\$${_formatPrice(price)}',
+                              style: const TextStyle(
+                                color: AppColors.textPrimary,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15.5,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 3),
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: (c.chg24h >= 0 ? AppColors.greenTask : AppColors.redTask)
+                                      .withValues(alpha: 0.14),
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '24h: ${c.chg24h >= 0 ? '+' : ''}${c.chg24h.toStringAsFixed(1)}%',
+                                  style: TextStyle(
+                                    color: c.chg24h >= 0 ? AppColors.greenTask : AppColors.redTask,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                decoration: BoxDecoration(
+                                  color: AppColors.surfaceVariant,
+                                  borderRadius: BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                  '1Y: ${c.chg365d >= 0 ? '+' : ''}${c.chg365d.toStringAsFixed(0)}%',
+                                  style: TextStyle(
+                                    color: c.chg365d >= 0 ? AppColors.greenTask : AppColors.textSecondary,
+                                    fontSize: 9.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 2. Вердикт алгоритму: Фаза циклу + Індекс Закупки vs Перегріву
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: phaseColor.withValues(alpha: 0.11),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: phaseColor.withValues(alpha: 0.35)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(phaseIcon, size: 15, color: phaseColor),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Text(
+                                  c.actionTitleUk,
+                                  style: TextStyle(
+                                    color: phaseColor,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.greenTask.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Text(
+                                'Закупка: ${c.accumulationScore}/100',
+                                style: const TextStyle(
+                                  color: AppColors.greenTask,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 9.5,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: AppColors.warning.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(5),
+                              ),
+                              child: Text(
+                                'Перегрів: ${c.sellPressureScore}/100',
+                                style: const TextStyle(
+                                  color: AppColors.warning,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 9.5,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          c.recommendedActionShort,
+                          style: const TextStyle(
+                            color: AppColors.textPrimary,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  // Якщо монета вже є в портфелі користувача — показуємо його точку входу та пораду
+                  if (hasUserPos) ...[
+                    const SizedBox(height: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: AppColors.surfaceVariant.withValues(alpha: 0.55),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: AppColors.border),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.account_balance_wallet_outlined, size: 13, color: AppColors.accentLight),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              alignment: Alignment.centerLeft,
+                              child: Text(
+                                'У вашому портфелі: ${_formatAmount(userAmount)} ${c.symbol} · Вхід: \$${_formatPrice(userEntry)}',
+                                style: const TextStyle(
+                                  color: AppColors.textSecondary,
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            '${userPnlPct >= 0 ? '+' : ''}${userPnlPct.toStringAsFixed(2)}%',
+                            style: TextStyle(
+                              color: userPnlPct >= 0 ? AppColors.greenTask : AppColors.redTask,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+
+                  // 3. Візуальна шкала положення в 365-денному коридорі (Дно 365D -> Пік 365D)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Flexible(
+                            child: Text(
+                              'Дно 365D: \$${_formatPrice(c.atl365)}',
+                              style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            child: Text(
+                              'Дисконт від ATH: -${c.dropFromAthPct.toStringAsFixed(1)}%',
+                              style: const TextStyle(
+                                color: AppColors.accentLight,
+                                fontSize: 9.5,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Flexible(
+                            child: Text(
+                              'Пік 365D: \$${_formatPrice(c.ath365)}',
+                              style: const TextStyle(color: AppColors.textDisabled, fontSize: 9.5),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              textAlign: TextAlign.right,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(5),
+                        child: LinearProgressIndicator(
+                          value: (c.rangePositionPct / 100.0).clamp(0.03, 1.0),
+                          backgroundColor: AppColors.surfaceVariant,
+                          valueColor: AlwaysStoppedAnimation<Color>(phaseColor),
+                          minHeight: 6,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+
+                  // 4. Чотири інституційні метрики оцінки вартості
+                  Row(
+                    children: [
+                      _buildQuantTile(
+                        label: 'Mayer (SMA200)',
+                        value: '${c.mayerMultiple.toStringAsFixed(2)}x',
+                        sub: '\$${_formatPrice(c.sma200)}',
+                        valueColor: c.mayerMultiple < 0.95
+                            ? AppColors.greenTask
+                            : (c.mayerMultiple > 1.50 ? AppColors.warning : AppColors.textPrimary),
+                      ),
+                      const SizedBox(width: 4),
+                      _buildQuantTile(
+                        label: 'MVRV (365D VWAP)',
+                        value: '${c.mvrvProxy.toStringAsFixed(2)}x',
+                        sub: '\$${_formatPrice(c.vwap365)}',
+                        valueColor: c.mvrvProxy <= 1.0
+                            ? AppColors.greenTask
+                            : (c.mvrvProxy > 1.45 ? AppColors.warning : AppColors.blueTask),
+                      ),
+                      const SizedBox(width: 4),
+                      _buildQuantTile(
+                        label: 'RSI (1D / 1W)',
+                        value: '${c.rsi14d.toStringAsFixed(0)} / ${c.rsi14w.toStringAsFixed(0)}',
+                        sub: c.rsi14w <= 45
+                            ? 'Перепроданий'
+                            : (c.rsi14w >= 70 ? 'Перегрітий' : 'Нейтральний'),
+                        valueColor: c.rsi14d <= 42
+                            ? AppColors.greenTask
+                            : (c.rsi14d >= 68 ? AppColors.warning : AppColors.textPrimary),
+                      ),
+                      const SizedBox(width: 4),
+                      _buildQuantTile(
+                        label: 'POC Об\'єму 365D',
+                        value: '\$${_formatPrice(c.poc365)}',
+                        sub: 'Flow: ${c.takerDeltaPp >= 0 ? '+' : ''}${c.takerDeltaPp.toStringAsFixed(1)} п.п.',
+                        valueColor: AppColors.accentLight,
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          const Divider(height: 1, color: AppColors.border),
+
+          // 5. ГОЛОВНИЙ БЛОК ТРЕЙДЕРА: КОЛИ КУПУВАТИ (3 РІВНІ DCA) vs КОЛИ ПРОДАВАТИ (TP1/TP2/TP3)
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // БЛОК ЗАКУПКИ (ЗЕЛЕНИЙ)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.greenTask.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.greenTask.withValues(alpha: 0.28)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.download_rounded, size: 14, color: AppColors.greenTask),
+                          SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              'КОЛИ ЗАКУПАТИ (ДРАБИНА НАКОПИЧЕННЯ SMART DCA)',
+                              style: TextStyle(
+                                color: AppColors.greenTask,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      _buildLadderRow(
+                        badge: '${c.buyZone1SharePct}%',
+                        badgeColor: AppColors.greenTask,
+                        label: c.buyZone1Label,
+                        priceStr: '\$${_formatPrice(c.buyZone1Price)}',
+                        diffStr: buy1DiffPct.abs() < 0.8
+                            ? 'Зараз'
+                            : '${buy1DiffPct >= 0 ? '+' : ''}${buy1DiffPct.toStringAsFixed(1)}%',
+                      ),
+                      const SizedBox(height: 4),
+                      _buildLadderRow(
+                        badge: '${c.buyZone2SharePct}%',
+                        badgeColor: AppColors.greenTask,
+                        label: c.buyZone2Label,
+                        priceStr: '\$${_formatPrice(c.buyZone2Price)}',
+                        diffStr: '${buy2DiffPct >= 0 ? '+' : ''}${buy2DiffPct.toStringAsFixed(1)}%',
+                      ),
+                      const SizedBox(height: 4),
+                      _buildLadderRow(
+                        badge: '${c.buyZone3SharePct}%',
+                        badgeColor: AppColors.greenTask,
+                        label: c.buyZone3Label,
+                        priceStr: '\$${_formatPrice(c.buyZone3Price)}',
+                        diffStr: '${buy3DiffPct >= 0 ? '+' : ''}${buy3DiffPct.toStringAsFixed(1)}%',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // БЛОК ПРОДАЖУ / ФІКСАЦІЇ ПРИБУТКУ (ПОМАРАНЧЕВО-ЗОЛОТИЙ)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: AppColors.warning.withValues(alpha: 0.07),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.warning.withValues(alpha: 0.28)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(Icons.upload_rounded, size: 14, color: AppColors.warning),
+                          SizedBox(width: 5),
+                          Expanded(
+                            child: Text(
+                              'КОЛИ ПРОДАВАТИ (КАСКАД ФІКСАЦІЇ ПРИБУТКУ TP1–TP3)',
+                              style: TextStyle(
+                                color: AppColors.warning,
+                                fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                letterSpacing: 0.5,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      _buildLadderRow(
+                        badge: '${c.tp1SharePct}%',
+                        badgeColor: AppColors.warning,
+                        label: c.tp1Label,
+                        priceStr: '\$${_formatPrice(c.tp1Price)}',
+                        diffStr: '+${tp1GainPct.toStringAsFixed(1)}%',
+                      ),
+                      const SizedBox(height: 4),
+                      _buildLadderRow(
+                        badge: '${c.tp2SharePct}%',
+                        badgeColor: AppColors.warning,
+                        label: c.tp2Label,
+                        priceStr: '\$${_formatPrice(c.tp2Price)}',
+                        diffStr: '+${tp2GainPct.toStringAsFixed(1)}%',
+                      ),
+                      const SizedBox(height: 4),
+                      _buildLadderRow(
+                        badge: '${c.tp3SharePct}%',
+                        badgeColor: AppColors.warning,
+                        label: c.tp3Label,
+                        priceStr: '\$${_formatPrice(c.tp3Price)}',
+                        diffStr: '+${tp3GainPct.toStringAsFixed(1)}%',
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // Кнопки дій: Детальний розбір + Додати в DCA
+                Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: () => setState(() => _isExpanded = !_isExpanded),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                _isExpanded
+                                    ? Icons.keyboard_arrow_up_rounded
+                                    : Icons.keyboard_arrow_down_rounded,
+                                color: AppColors.accentLight,
+                                size: 18,
+                              ),
+                              const SizedBox(width: 4),
+                              Flexible(
+                                child: Text(
+                                  _isExpanded
+                                      ? 'Згорнути аналітику трейдера'
+                                      : 'Повний розбір: Собівартість, Правила купівлі/продажу & AI',
+                                  style: const TextStyle(
+                                    color: AppColors.accentLight,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.accent.withValues(alpha: 0.15),
+                        foregroundColor: AppColors.accentLight,
+                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                        minimumSize: const Size(0, 34),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(9),
+                          side: const BorderSide(color: AppColors.accent),
+                        ),
+                        elevation: 0,
+                      ),
+                      icon: const Icon(Icons.add_shopping_cart_rounded, size: 14),
+                      label: const Text(
+                        'В DCA',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      ),
+                      onPressed: widget.onAddToDca,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          // 6. Розгорнута секція з детальним інституційним обґрунтуванням
+          if (_isExpanded) ...[
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant.withValues(alpha: 0.5),
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(16),
+                  bottomRight: Radius.circular(16),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (c.aiCommentary.isNotEmpty) ...[
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.09),
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: AppColors.accent.withValues(alpha: 0.3)),
+                      ),
+                      child: _buildBlock(
+                        icon: Icons.psychology_rounded,
+                        iconColor: AppColors.accentLight,
+                        title: 'ВЕРДИКТ ІНСТИТУЦІЙНОГО СТРАТЕГА AI',
+                        content: c.aiCommentary,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  _buildBlock(
+                    icon: Icons.analytics_outlined,
+                    iconColor: AppColors.blueTask,
+                    title: '1. ОЦІНКА СПРАВЕДЛИВОЇ ВАРТОСТІ ТА СОБІВАРТОСТІ (365D)',
+                    content: c.valuationSummary,
+                  ),
+                  const SizedBox(height: 10),
+                  _buildBlock(
+                    icon: Icons.shopping_bag_outlined,
+                    iconColor: AppColors.greenTask,
+                    title: '2. ЛОГІКА ЗАКУПКИ (КОЛИ ТА ЯК НАБИРАТИ ПОЗИЦІЮ)',
+                    content: c.buyTriggerRule,
+                  ),
+                  const SizedBox(height: 10),
+                  _buildBlock(
+                    icon: Icons.monetization_on_outlined,
+                    iconColor: AppColors.warning,
+                    title: '3. ЛОГІКА ПРОДАЖУ (КОЛИ ФІКСУВАТИ ПРИБУТОК ПО ЦИКЛУ)',
+                    content: c.sellTriggerRule,
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: AppColors.redTask.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.redTask.withValues(alpha: 0.28)),
+                    ),
+                    child: _buildBlock(
+                      icon: Icons.shield_outlined,
+                      iconColor: AppColors.redTask,
+                      title: '4. РІВЕНЬ ЗЛАМУ МАКРО-СТРУКТУРИ ТА ЗАХИСТ КАПІТАЛУ',
+                      content: c.invalidationRule,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuantTile({
+    required String label,
+    required String value,
+    required String sub,
+    required Color valueColor,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 5),
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                label,
+                style: const TextStyle(color: AppColors.textDisabled, fontSize: 8.5),
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(height: 2),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                value,
+                style: TextStyle(
+                  color: valueColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11.5,
+                ),
+                maxLines: 1,
+              ),
+            ),
+            const SizedBox(height: 1),
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: Alignment.centerLeft,
+              child: Text(
+                sub,
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 8.5),
+                maxLines: 1,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLadderRow({
+    required String badge,
+    required Color badgeColor,
+    required String label,
+    required String priceStr,
+    required String diffStr,
+  }) {
+    return Row(
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+          decoration: BoxDecoration(
+            color: badgeColor.withValues(alpha: 0.18),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            badge,
+            style: TextStyle(
+              color: badgeColor,
+              fontSize: 9.5,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 10.5,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 6),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            priceStr,
+            style: const TextStyle(
+              color: AppColors.textPrimary,
+              fontWeight: FontWeight.bold,
+              fontSize: 11.5,
+            ),
+          ),
+        ),
+        const SizedBox(width: 5),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            diffStr,
+            style: TextStyle(
+              color: badgeColor,
+              fontSize: 9.5,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildBlock({
+    required IconData icon,
+    required Color iconColor,
+    required String title,
+    required String content,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(icon, color: iconColor, size: 14),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                title,
+                style: TextStyle(
+                  color: iconColor,
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 0.5,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 4),
+        Text(
+          content,
+          style: const TextStyle(color: AppColors.textPrimary, fontSize: 12, height: 1.35),
+        ),
+      ],
+    );
+  }
+
+  String _formatAmount(double amt) {
+    if (amt >= 100) return amt.toStringAsFixed(2);
+    if (amt >= 1) return amt.toStringAsFixed(4);
+    return amt.toStringAsFixed(6).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+  }
+
+  String _formatPrice(double val) {
+    if (val == 0) return '0.0000';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.0000', 'en_US').format(abs)}';
+    } else if (abs >= 0.0001) {
+      return '$sign${abs.toStringAsFixed(4)}';
+    } else {
+      return '$sign${abs.toStringAsFixed(6)}';
+    }
+  }
+}
+
 

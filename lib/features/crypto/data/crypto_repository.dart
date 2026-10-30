@@ -171,5 +171,54 @@ class CryptoRepository {
       await batch.commit();
     } catch (_) {}
   }
+
+  // --- СИНХРОНІЗАЦІЯ WEB3 DCA ТРАНШІВ (Некастодіальні гаманці: Bitcoin On-chain, MetaMask, Solana) ---
+  Future<void> syncWeb3DcaTranches(List<DcaTransaction> newWeb3Tranches) async {
+    final col = _dcaCollection;
+    if (col == null) return;
+
+    try {
+      final snapshot = await col.get();
+      final web3Docs = snapshot.docs.where((d) {
+        final wt = ((d.data() as Map<String, dynamic>)['walletType'] as String? ?? '').toUpperCase();
+        return wt.startsWith('WEB3') ||
+            wt.contains('ON-CHAIN') ||
+            wt.contains('METAMASK') ||
+            wt.contains('EVM') ||
+            wt.contains('SOLANA') ||
+            wt == 'BTC';
+      }).toList();
+
+      final Map<String, DcaTransaction> existingMap = {};
+      for (final doc in web3Docs) {
+        existingMap[doc.id] = DcaTransaction.fromMap(doc.id, doc.data() as Map<String, dynamic>);
+      }
+
+      final batch = _firestore.batch();
+
+      for (final tx in newWeb3Tranches) {
+        final existing = existingMap[tx.id];
+        DcaTransaction effectiveTx = tx;
+
+        // Зберігаємо раніше зафіксовану користувачем ціну входу або дату
+        if (existing != null && existing.buyPrice > 0) {
+          effectiveTx = DcaTransaction(
+            id: tx.id,
+            symbol: tx.symbol,
+            walletType: tx.walletType,
+            amount: tx.amount,
+            buyPrice: existing.buyPrice,
+            fee: existing.fee > 0 ? existing.fee : tx.fee,
+            txDate: existing.txDate,
+            notes: existing.notes.isNotEmpty ? existing.notes : tx.notes,
+          );
+        }
+
+        batch.set(col.doc(effectiveTx.id), effectiveTx.toMap());
+      }
+
+      await batch.commit();
+    } catch (_) {}
+  }
 }
 

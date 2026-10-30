@@ -198,6 +198,110 @@ void main() {
       expect(parsed.merchant, equals('Кешбек'));
     });
 
+    test('Income notification: Приход зарплаты', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Приход зарплаты: 25 000.00 грн. Баланс: 30 000 грн',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(25000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('Зарплата'));
+    });
+
+    test('Income notification: Зачисление зарплаты (ru/ua bank push)', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: 'monobank',
+        content: 'Зачисление зарплаты 20 000 ₴ от ООО «Прогресс». Баланс: 22 000 ₴',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(20000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('ООО «Прогресс»'));
+    });
+
+    test('Income notification: Зарплатний переказ з відправником', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Зарплатний переказ 35 000 ₴ від ТОВ «Технолоджі». Картка *4394',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(35000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('ТОВ «Технолоджі»'));
+    });
+
+    test('Income notification: Зараховано заробітну плату (narrow space unicode 202F)', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.pumb.mobile',
+        title: 'ПУМБ',
+        content: 'Зараховано: 18\u202F500.00 UAH. Заробітна плата. Доступно: 20 000 UAH',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(18500.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('Зарплата'));
+    });
+
+    test('Income notification: Вхідний переказ від людини', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: 'monobank',
+        content: 'Вхідний переказ 5 000 ₴ від Коваленко А.В. Баланс: 7 000 ₴',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(5000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('Коваленко А.В.'));
+    });
+
+    test('Income notification: Надійшов переказ', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.privatbank.ap24',
+        title: 'Privat24',
+        content: 'Надійшов переказ: 2 000 грн від Сидоренко О.М. Картка *1234',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(2000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('Сидоренко О.М.'));
+    });
+
+    test('Income notification: Monobank +15 000 ₴ з коментарем', () {
+      final parsed = service.parseNotification(
+        packageName: 'com.ftband.mono',
+        title: '+15 000 ₴',
+        content: 'Від Іван І. Коментар: зарплата. Баланс 16 000 ₴',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(15000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('Іван І.'));
+    });
+
+    test('Income notification: Поповнення картки', () {
+      final parsed = service.parseNotification(
+        packageName: 'ua.sensebank.sense',
+        title: 'Sense Bank',
+        content: 'Поповнення картки на 3 000 UAH від ПЕТРЕНКО. Залишок: 3 500 UAH',
+      );
+
+      expect(parsed, isNotNull);
+      expect(parsed!.amount, equals(3000.0));
+      expect(parsed.isIncome, isTrue);
+      expect(parsed.merchant, equals('ПЕТРЕНКО'));
+    });
+
     test('Non-financial notification: should return null', () {
       final parsed = service.parseNotification(
         packageName: 'com.google.android.apps.messaging',

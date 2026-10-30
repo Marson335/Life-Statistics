@@ -3,9 +3,12 @@ import 'dart:math' as math;
 import 'package:http/http.dart' as http;
 import 'models/crypto_models.dart';
 import 'groq_ai_service.dart';
+import 'radar_http.dart';
+import 'radar_trade_simulator.dart';
 
 /// Закриті денні свічки (поточна незавершена свічка відкидається).
 class _Candles {
+  final List<int> openTimes = [];
   final List<double> opens = [];
   final List<double> highs = [];
   final List<double> lows = [];
@@ -14,7 +17,22 @@ class _Candles {
   final List<double> quoteVolumes = [];
   final List<double> takerBuy = [];
   int get length => closes.length;
+
+  /// Копія перших [end] свічок — для walk-forward бектесту (стан «на день t»).
+  _Candles sliceTo(int end) {
+    final s = _Candles();
+    s.openTimes.addAll(openTimes.sublist(0, end));
+    s.opens.addAll(opens.sublist(0, end));
+    s.highs.addAll(highs.sublist(0, end));
+    s.lows.addAll(lows.sublist(0, end));
+    s.closes.addAll(closes.sublist(0, end));
+    s.volumes.addAll(volumes.sublist(0, end));
+    s.quoteVolumes.addAll(quoteVolumes.sublist(0, end));
+    s.takerBuy.addAll(takerBuy.sublist(0, end));
+    return s;
+  }
 }
+
 
 /// Сирі метрики монети. Рахуються для ВСЬОГО ліквідного всесвіту —
 /// це база для крос-секційних перцентилів та ширини ринку (breadth).
@@ -49,7 +67,7 @@ class _CoinPlan {
   String tp1Source = '', tp2Source = '';
   double rr1 = 0, rr2 = 0, blendedRR = 0;
   double? intermediateResistance;
-  double hitRate = -1, expectancy = 0;
+  double hitRate = -1, expectancy = 0, expectancyR = 0;
   int samples = 0;
   int timeStopDays = 21;
   double fMom = 0, fTrend = 0, fFlow = 0, fContr = 0, fEntry = 0, fRR = 0;
@@ -123,7 +141,7 @@ class CryptoMarketScannerService {
   static const String _baseUrl = 'https://api.binance.com';
 
   static const int _maxUniverse = 200;
-  static const int _klineLimit = 230;
+  static const int _klineLimit = 365;
   static const int _batchSize = 20;
   static const int _minHistoryDays = 120;
   static const double _minQuoteVolume24h = 2000000;
@@ -132,6 +150,19 @@ class CryptoMarketScannerService {
   static const double _maxPositionPct = 25.0;
   static const double _maxStopPct = 18.0;
   static const double _maxPairCorrelation = 0.85;
+
+  /// Сумарний ризик усіх відкритих сигналів (% депозиту) = ця константа × множник режиму.
+  static const double _maxTotalRiskPct = 6.0;
+
+  /// Позиція не більше цієї частки медіанного добового обсягу монети (ліквідність виходу).
+  static const double _maxPositionVsDailyVolume = 0.01;
+
+  /// Кількість днів для вирівнювання рядів монети та BTC за датою.
+  static const int _alignDays = 94;
+
+  /// Walk-forward бектест: крок між перевірками та мінімум угод для статистики.
+  static const int _btCooldownDays = 5;
+  static const int _btMinTrades = 8;
 
   static const Set<String> _excludedTokens = {
     'USDT', 'USDC', 'FDUSD', 'TUSD', 'DAI', 'BUSD', 'EUR', 'GBP', 'UAH',
@@ -145,29 +176,41 @@ class CryptoMarketScannerService {
   Future<AiMarketRadarReport> scanMarket({
     void Function(String stage, double progress)? onProgress,
     double portfolioValueUsd = 0.0,
+
+    /// Монети, які вже є в портфелі: символ → вартість у USD (щоб радар не радив «купити» те, що вже є).
+    Map<String, double> heldValueUsd = const {},
+
+    /// Фактичний середній результат (R) по типу сетапу з журналу радара — калібрує оцінку.
+    Map<String, double> setupEdgeR = const {},
   }) async {
     final funnel = <String, int>{};
+    int rateLimitHits = 0;
+    void onRateLimited() => rateLimitHits++;
     try {
       // ---------------------------------------------------------------
-      // ЕТАП 1. Котирування всіх пар + 230 днів BTC
+      // ЕТАП 1. Котирування всіх пар + історія BTC
       // ---------------------------------------------------------------
       onProgress?.call('Етап 1/5: Котирування 350+ пар Binance та макро-режим BTC...', 0.08);
 
       final responses = await Future.wait([
-        http.get(Uri.parse('$_baseUrl/api/v3/ticker/24hr')).timeout(const Duration(seconds: 12)),
-        http
-            .get(Uri.parse('$_baseUrl/api/v3/klines?symbol=BTCUSDT&interval=1d&limit=$_klineLimit'))
-            .timeout(const Duration(seconds: 8)),
+        RadarHttp.getWithRetry(
+          Uri.parse('$_baseUrl/api/v3/ticker/24hr'),
+          timeout: const Duration(seconds: 20),
+          onRateLimited: onRateLimited,
+        ),
+        RadarHttp.fetchDailyKlines('BTCUSDT', _klineLimit, onRateLimited: onRateLimited),
       ]);
-      if (responses[0].statusCode != 200) {
-        throw Exception('Binance ticker недоступний (${responses[0].statusCode})');
+      final tickerResp = responses[0] as http.Response?;
+      final btcRaw = responses[1] as List<dynamic>?;
+      if (tickerResp == null) {
+        throw Exception('Binance ticker недоступний (мережа або ліміт запитів) після 3 спроб');
       }
-      if (responses[1].statusCode != 200) {
-        throw Exception('Не вдалося отримати історію BTC (${responses[1].statusCode})');
+      if (btcRaw == null) {
+        throw Exception('Не вдалося отримати історію BTC після 3 спроб');
       }
 
-      final List<dynamic> allTickers = json.decode(responses[0].body);
-      final btc = _parseKlines(json.decode(responses[1].body) as List<dynamic>);
+      final List<dynamic> allTickers = json.decode(tickerResp.body);
+      final btc = _parseKlines(btcRaw);
       if (btc.length < 200) throw Exception('Недостатньо історії BTC для розрахунку режиму');
 
       double btcPrice = btc.closes.last;
@@ -227,14 +270,16 @@ class CryptoMarketScannerService {
         );
         final results = await Future.wait(batch.map((u) async {
           try {
-            final resp = await http
-                .get(Uri.parse('$_baseUrl/api/v3/klines?symbol=${u['pair']}&interval=1d&limit=$_klineLimit'))
-                .timeout(const Duration(seconds: 8));
-            if (resp.statusCode != 200) {
+            final raw = await RadarHttp.fetchDailyKlines(
+              u['pair'] as String,
+              _klineLimit,
+              onRateLimited: onRateLimited,
+            );
+            if (raw == null) {
               _inc(funnel, 'fetchError');
               return null;
             }
-            final candles = _parseKlines(json.decode(resp.body) as List<dynamic>);
+            final candles = _parseKlines(raw);
             return _computeMetrics(
               u['symbol'] as String,
               u['price'] as double,
@@ -249,12 +294,22 @@ class CryptoMarketScannerService {
           }
         }));
         metrics.addAll(results.whereType<_CoinMetrics>());
+        // Невелика пауза між пачками — не впираємося в ліміти ваги Binance
+        await Future.delayed(const Duration(milliseconds: 120));
       }
       funnel['analyzed'] = metrics.length;
 
       if (metrics.isEmpty) {
         throw Exception('Не вдалося проаналізувати жодної пари — перевірте з\'єднання з Binance');
       }
+
+      // Якщо значна частина монет не завантажилась, звіт неповний — чесно попереджаємо
+      final fetchErrors = funnel['fetchError'] ?? 0;
+      final dataQualityNote = (fetchErrors > selectedUniverse.length * 0.15 || rateLimitHits > 0)
+          ? '⚠️ Дані неповні: не завантажено $fetchErrors із ${selectedUniverse.length} монет'
+              '${rateLimitHits > 0 ? ' (Binance обмежив частоту запитів ×$rateLimitHits)' : ''}. '
+              'Повторіть скан через 1–2 хвилини для повного результату.\n\n'
+          : '';
 
       // ---------------------------------------------------------------
       // ЕТАП 4. Режим ринку (BTC + ширина) та торгові плани
@@ -266,11 +321,24 @@ class CryptoMarketScannerService {
       final regime = _resolveRegime(btcCtx, breadthPct);
       final riskPerTradePct = _baseRiskPerTradePct * regime.riskMultiplier;
 
+      // Спочатку швидка класифікація, потім важкий walk-forward бектест лише для кандидатів
+      int planned = 0;
       for (final m in metrics) {
-        m.plan = _buildPlan(m, funnel);
+        m.plan = _buildPlan(m, funnel, btc);
+        if (m.plan != null) {
+          planned++;
+          if (planned % 3 == 0) {
+            onProgress?.call(
+              'Етап 4/5: Walk-forward бектест сетапів ($planned)...',
+              0.76 + 0.06 * math.min(1.0, planned / 40.0),
+            );
+            await Future.delayed(Duration.zero); // віддаємо кадр UI
+          }
+        }
       }
       final withPlans = metrics.where((m) => m.plan != null).toList();
       funnel['setups'] = withPlans.length;
+
 
       // ---------------------------------------------------------------
       // ЕТАП 5. Крос-секційний 6-факторний скор + диверсифікація
@@ -302,11 +370,12 @@ class CryptoMarketScannerService {
         };
         if (m.rsiDelta > 0) fEntry += 0.10;
         if (p.entryStatus == RadarEntryStatus.buyNow) {
+          // Близький стоп вже враховано у факторі R:R — тут лише невеликий бонус (без подвійного підрахунку)
           final distToStopAtr = (m.price - p.stop) / m.atr14;
           if (distToStopAtr <= 2.0) {
-            fEntry += 0.20;
-          } else if (distToStopAtr <= 3.0) {
             fEntry += 0.10;
+          } else if (distToStopAtr <= 3.0) {
+            fEntry += 0.05;
           }
         }
         if (m.rsi > 68) fEntry -= 0.10;
@@ -325,19 +394,45 @@ class CryptoMarketScannerService {
           score *= 0.9;
         }
         if (regime.code == 'RISK_ON' && p.setupType.contains('Розворот')) score *= 0.95;
+
+        // Калібрування за реальними результатами з журналу радара (лише при >= 10 закритих угод цього сетапу)
+        final edge = setupEdgeR[p.setupType];
+        if (edge != null) {
+          if (edge < -0.2) {
+            score *= 0.9;
+          } else if (edge > 0.4) {
+            score *= 1.05;
+          }
+        }
         p.score = score.clamp(1.0, 99.0);
       }
 
       withPlans.sort((a, b) => b.plan!.score.compareTo(a.plan!.score));
 
+      // Ліміт сумарного ризику: вже відкриті значущі позиції теж «з'їдають» бюджет ризику
+      final totalRiskBudget = _maxTotalRiskPct * regime.riskMultiplier;
+      final significantHeld = heldValueUsd.entries
+          .where((e) => e.value >= math.max(20.0, portfolioValueUsd * 0.02))
+          .length;
+      final heldRiskUsed = math.min(totalRiskBudget * 0.5, significantHeld * riskPerTradePct);
+      final riskBudgetForNew = totalRiskBudget - heldRiskUsed;
+      final riskSlots = math.max(0, (riskBudgetForNew / riskPerTradePct).floor());
+      final pickLimit = math.min(regime.maxPicks, riskSlots);
+
       final picks = <_CoinMetrics>[];
       for (final m in withPlans) {
-        if (m.plan!.score < regime.minScore) {
+        final plan = m.plan!;
+        if (plan.score < regime.minScore) {
           _inc(funnel, 'lowScore');
           continue;
         }
-        if (picks.length >= regime.maxPicks) {
-          _inc(funnel, 'overLimit');
+        // Реальна статистика цього сетапу на цій монеті від'ємна — не пропонуємо
+        if (plan.samples >= _btMinTrades + 2 && plan.expectancyR < -0.15) {
+          _inc(funnel, 'negativeEdge');
+          continue;
+        }
+        if (picks.length >= pickLimit) {
+          _inc(funnel, picks.length >= regime.maxPicks ? 'overLimit' : 'riskBudget');
           continue;
         }
         final tooCorrelated = picks.any((s) => _correlation(s.returns60, m.returns60) > _maxPairCorrelation);
@@ -348,21 +443,32 @@ class CryptoMarketScannerService {
         picks.add(m);
       }
       funnel['selected'] = picks.length;
+      final totalOpenRisk = picks.length * riskPerTradePct;
 
       // ---------------------------------------------------------------
       // Формування сигналів
       // ---------------------------------------------------------------
       final now = DateTime.now();
       final opportunities = picks
-          .map((m) => _toOpportunity(m, regime, riskPerTradePct, portfolioValueUsd, btcCtx, now))
+          .map((m) => _toOpportunity(
+                m,
+                regime,
+                riskPerTradePct,
+                portfolioValueUsd,
+                btcCtx,
+                now,
+                heldUsd: heldValueUsd[m.symbol] ?? 0.0,
+              ))
           .toList();
 
-      final macro = StringBuffer()
+      final macro = StringBuffer(dataQualityNote)
         ..write('Режим: ${regime.label}. Ширина ринку: ${breadthPct.toStringAsFixed(0)}% ліквідних монет вище EMA50. ')
         ..write('Глибоко проаналізовано ${metrics.length} пар із $usdtPairs; знайдено ${withPlans.length} валідних сетапів, ')
-        ..write('відібрано ${picks.length} з урахуванням порогу оцінки (${regime.minScore.toStringAsFixed(0)}+) та кореляції між монетами. ')
-        ..write('Ризик на угоду: ${riskPerTradePct.toStringAsFixed(2)}% депозиту. ')
+        ..write('відібрано ${picks.length} з урахуванням порогу оцінки (${regime.minScore.toStringAsFixed(0)}+), кореляції між монетами '
+            'та ліміту сумарного ризику (${totalRiskBudget.toStringAsFixed(1)}% депозиту; вже в портфелі значущих позицій: $significantHeld). ')
+        ..write('Ризик на угоду: ${riskPerTradePct.toStringAsFixed(2)}% депозиту, разом по сигналах: ${totalOpenRisk.toStringAsFixed(2)}%. ')
         ..write(regime.advice);
+
       if (picks.isEmpty) {
         macro.write('\n\nЖодна монета зараз не пройшла всі фільтри якості. Це нормальний результат: '
             'найкраща позиція в такий момент — кеш і очікування.');
@@ -380,6 +486,7 @@ class CryptoMarketScannerService {
         coinsDeepAnalyzed: metrics.length,
         setupsFound: withPlans.length,
         funnel: Map<String, int>.from(funnel),
+        totalOpenRiskPct: totalOpenRisk,
       );
 
       // ---------------------------------------------------------------
@@ -400,6 +507,7 @@ class CryptoMarketScannerService {
         btcTrend: '—',
         macroSummary: 'Не вдалося завершити сканування: $e. Перевірте з\'єднання з інтернетом та повторіть спробу.',
         totalCoinsScanned: 0,
+        isError: true,
         opportunities: const [],
         funnel: funnel,
       );
@@ -432,12 +540,38 @@ class CryptoMarketScannerService {
       return null;
     }
 
-    // Памп-енд-дамп: денний ріст > 45% за останні 30 днів — фаза розподілу, не купуємо
+    // Памп-енд-дамп: денний ріст > 45% за останні 30 днів, або +120% за тиждень, або +200% за 14 днів —
+    // фаза розподілу, не купуємо
     for (int i = n - 30; i < n; i++) {
       if (closes[i - 1] > 0 && closes[i] / closes[i - 1] - 1.0 > 0.45) {
         _inc(funnel, 'pumpDump');
         return null;
       }
+    }
+    if ((closes[n - 8] > 0 && closes[n - 1] / closes[n - 8] - 1.0 > 1.2) ||
+        (closes[n - 15] > 0 && closes[n - 1] / closes[n - 15] - 1.0 > 2.0)) {
+      _inc(funnel, 'pumpDump');
+      return null;
+    }
+
+    // Вирівнювання за датою: останні _alignDays днів BTC мають існувати і в монети
+    // (інакше доходності були б зсунуті, а beta/кореляція — хибні)
+    final bn = btc.length;
+    if (bn < _alignDays) return null;
+    final coinIdxByOpen = <int, int>{};
+    for (int i = 0; i < n; i++) {
+      coinIdxByOpen[c.openTimes[i]] = i;
+    }
+    final aCoin = <double>[]; // закриття монети на спільних датах
+    final aBtc = <double>[]; // закриття BTC на тих самих датах
+    for (int j = bn - _alignDays; j < bn; j++) {
+      final ci = coinIdxByOpen[btc.openTimes[j]];
+      if (ci == null) {
+        _inc(funnel, 'misaligned');
+        return null;
+      }
+      aCoin.add(closes[ci]);
+      aBtc.add(btc.closes[j]);
     }
 
     final m = _CoinMetrics(symbol, price, qv24, c)..medianQuoteVolume20d = medianQv;
@@ -462,25 +596,26 @@ class CryptoMarketScannerService {
     m.rsi = _rsi(closes);
     m.rsiDelta = m.rsi - _rsi(closes.sublist(0, n - 3));
 
-    // Відносна сила vs BTC (пропускаємо останні 3 дні — короткостроковий шум/реверсія)
-    final bn = btc.length;
-    double ret(List<double> s, int len, int fromEnd, int back) {
-      final a = s[len - 1 - fromEnd];
-      final b = s[len - 1 - fromEnd - back];
+    // Відносна сила vs BTC на ВИРІВНЯНИХ за датою рядах
+    // (пропускаємо останні 3 дні — короткостроковий шум/реверсія)
+    final al = aCoin.length;
+    double ret(List<double> s, int fromEnd, int back) {
+      final a = s[al - 1 - fromEnd];
+      final b = s[al - 1 - fromEnd - back];
       return b > 0 ? (a / b - 1.0) * 100.0 : 0.0;
     }
 
-    m.rs30 = ret(closes, n, 3, 30) - ret(btc.closes, bn, 3, 30);
-    m.rs90 = ret(closes, n, 3, 90) - ret(btc.closes, bn, 3, 90);
+    m.rs30 = ret(aCoin, 3, 30) - ret(aBtc, 3, 30);
+    m.rs90 = ret(aCoin, 3, 90) - ret(aBtc, 3, 90);
     m.momRaw = 0.6 * m.rs30 + 0.4 * m.rs90;
 
-    // Денні доходності за 60 днів (для Sharpe, beta, кореляції)
+    // Денні доходності за 60 днів на спільних датах (для Sharpe, beta, кореляції)
     final rets = <double>[];
     final btcRets = <double>[];
     for (int k = 60; k >= 1; k--) {
-      final i = n - k, j = bn - k;
-      rets.add(closes[i - 1] > 0 ? closes[i] / closes[i - 1] - 1.0 : 0.0);
-      btcRets.add(btc.closes[j - 1] > 0 ? btc.closes[j] / btc.closes[j - 1] - 1.0 : 0.0);
+      final i = al - k;
+      rets.add(aCoin[i - 1] > 0 ? aCoin[i] / aCoin[i - 1] - 1.0 : 0.0);
+      btcRets.add(aBtc[i - 1] > 0 ? aBtc[i] / aBtc[i - 1] - 1.0 : 0.0);
     }
     m.returns60 = rets;
     final meanR = rets.reduce((a, b) => a + b) / rets.length;
@@ -547,7 +682,7 @@ class CryptoMarketScannerService {
   // СЕТАП, РІВНІ ВХОДУ / СТОПУ / ЦІЛЕЙ, ІСТОРИЧНА ПЕРЕВІРКА
   // ===========================================================================
 
-  _CoinPlan? _buildPlan(_CoinMetrics m, Map<String, int> funnel) {
+  _CoinPlan? _buildPlan(_CoinMetrics m, Map<String, int> funnel, _Candles? btc, {bool runBacktest = true}) {
     final c = m.candles;
     final n = c.length;
     final p = m.price;
@@ -716,28 +851,15 @@ class CryptoMarketScannerService {
       return null;
     }
 
-    // Історична перевірка: як часто на цій монеті (у тому ж положенні відносно EMA50)
-    // ціна доходила до TP1 раніше, ніж до SL, протягом 30 днів.
-    final ema50Series = _emaSeries(closes, 50);
-    final aboveNow = p > m.ema50;
+    // Історична перевірка (walk-forward): на кожному історичному дні заново будуємо ту саму
+    // торгову модель (_buildPlan) лише на даних «до цього дня» і симулюємо угоду на наступних свічках
+    // з комісіями та проковзуванням. Рахуються тільки дні, де спрацював ТОЙ САМИЙ тип сетапу.
     final tpF = (tp1 - entryRef) / entryRef;
-    final slF = slPct / 100.0;
-    int wins = 0, losses = 0, samples = 0;
-    for (int t = math.max(55, n - 200); t <= n - 31; t++) {
-      if ((closes[t] > ema50Series[t]) != aboveNow) continue;
-      samples++;
-      final e = closes[t];
-      for (int j = t + 1; j <= t + 30; j++) {
-        if (lows[j] <= e * (1.0 - slF)) {
-          losses++;
-          break;
-        }
-        if (highs[j] >= e * (1.0 + tpF)) {
-          wins++;
-          break;
-        }
-      }
+    var bt = (trades: 0, tp1Hits: 0, avgR: 0.0);
+    if (runBacktest && btc != null) {
+      bt = _walkForward(m, plan.setupType, btc);
     }
+    final enough = bt.trades >= _btMinTrades;
 
     plan
       ..entryMin = entryMin
@@ -753,11 +875,72 @@ class CryptoMarketScannerService {
       ..rr1 = rr1
       ..rr2 = rr2
       ..blendedRR = blended
-      ..samples = samples
-      ..hitRate = samples >= 15 ? wins / samples * 100.0 : -1.0
-      ..expectancy = samples >= 15 ? (wins * tpF - losses * slF) / samples * 100.0 : 0.0;
+      ..samples = bt.trades
+      ..hitRate = enough ? bt.tp1Hits / bt.trades * 100.0 : -1.0
+      ..expectancyR = enough ? bt.avgR : 0.0
+      // очікуваний чистий результат на угоду, % від суми позиції
+      ..expectancy = enough ? bt.avgR * slPct : 0.0;
     return plan;
   }
+
+  /// Walk-forward бектест типу сетапу на історії конкретної монети.
+  ({int trades, int tp1Hits, double avgR}) _walkForward(_CoinMetrics m, String setupType, _Candles btc) {
+    final c = m.candles;
+    final n = c.length;
+    final scratch = <String, int>{};
+    int trades = 0, tp1Hits = 0;
+    double sumR = 0;
+
+    // BTC: індекс за часом відкриття свічки — для вирівнювання зрізів
+    final btcIdx = <int, int>{};
+    for (int i = 0; i < btc.length; i++) {
+      btcIdx[btc.openTimes[i]] = i;
+    }
+
+    int t = _minHistoryDays + 5;
+    while (t < n - 2) {
+      final bEnd = btcIdx[c.openTimes[t]];
+      if (bEnd == null) {
+        t++;
+        continue;
+      }
+      final cs = c.sliceTo(t + 1);
+      final bs = btc.sliceTo(bEnd + 1);
+      final hm = _computeMetrics(m.symbol, cs.closes.last, cs.quoteVolumes.last, cs, bs, scratch);
+      final hp = hm == null ? null : _buildPlan(hm, scratch, bs, runBacktest: false);
+      if (hp == null || hp.setupType != setupType) {
+        t += 2;
+        continue;
+      }
+
+      final res = RadarTradeSimulator.simulate(
+        entryStatus: hp.entryStatus,
+        entryMax: hp.entryMax,
+        triggerPrice: hp.triggerPrice,
+        stop: hp.stop,
+        tp1: hp.tp1,
+        tp2: hp.tp2,
+        timeStopDays: hp.timeStopDays,
+        o: c.opens.sublist(t + 1),
+        h: c.highs.sublist(t + 1),
+        l: c.lows.sublist(t + 1),
+        c: c.closes.sublist(t + 1),
+      );
+
+      if (res.isClosed) {
+        trades++;
+        sumR += res.rMultiple;
+        if (res.tp1Hit) tp1Hits++;
+        t += _btCooldownDays;
+      } else if (res.status == 'open' || res.status == 'pending') {
+        break; // дані закінчилися до завершення угоди — далі ще пізніші дні, теж не завершені
+      } else {
+        t += 1; // не виконано / скасовано — угоди не було
+      }
+    }
+    return (trades: trades, tp1Hits: tp1Hits, avgR: trades > 0 ? sumR / trades : 0.0);
+  }
+
 
   // ===========================================================================
   // ПЕРЕТВОРЕННЯ В СИГНАЛ ДЛЯ UI
@@ -769,10 +952,20 @@ class CryptoMarketScannerService {
     double riskPerTradePct,
     double portfolioValueUsd,
     _BtcContext btcCtx,
-    DateTime now,
-  ) {
+    DateTime now, {
+    double heldUsd = 0.0,
+  }) {
     final p = m.plan!;
-    final positionPct = math.min(_maxPositionPct, riskPerTradePct / p.slPct * 100.0);
+    double positionPct = math.min(_maxPositionPct, riskPerTradePct / p.slPct * 100.0);
+    bool liquidityCapped = false;
+    if (portfolioValueUsd > 0) {
+      // Обмеження ліквідності: позиція ≤ 1% медіанного добового обсягу — вихід без проковзування
+      final liquidityCapPct = m.medianQuoteVolume20d * _maxPositionVsDailyVolume / portfolioValueUsd * 100.0;
+      if (liquidityCapPct < positionPct) {
+        positionPct = liquidityCapPct;
+        liquidityCapped = true;
+      }
+    }
     final positionUsd = portfolioValueUsd > 0 ? portfolioValueUsd * positionPct / 100.0 : 0.0;
 
     final riskLevel = (p.slPct <= 8 && m.beta < 1.3)
@@ -788,7 +981,18 @@ class CryptoMarketScannerService {
       warnings.add('Високий beta ${m.beta.toStringAsFixed(1)} до BTC: падіння BTC на 5% може дати ≈-${(m.beta * 5).toStringAsFixed(0)}% по монеті.');
     }
     if (p.hitRate >= 0 && p.hitRate < 40) {
-      warnings.add('Історично TP1 досягався лише в ${p.hitRate.toStringAsFixed(0)}% випадків — розгляньте менший розмір.');
+      warnings.add('Walk-forward бектест цього сетапу на монеті: TP1 досягався лише в ${p.hitRate.toStringAsFixed(0)}% угод — розгляньте менший розмір.');
+    }
+    if (p.hitRate < 0) {
+      warnings.add('Замало історичних угод цього сетапу на монеті (${p.samples} < $_btMinTrades) — статистика бектесту недостовірна.');
+    } else if (p.expectancyR < 0) {
+      warnings.add('Історичний результат цього сетапу на монеті від\'ємний (${p.expectancyR.toStringAsFixed(2)}R на угоду з комісіями).');
+    }
+    if (heldUsd > 0) {
+      warnings.add('Ця монета вже є у вашому портфелі (≈\$${heldUsd.toStringAsFixed(0)}) — не збільшуйте концентрацію понад ліміт.');
+    }
+    if (liquidityCapped) {
+      warnings.add('Розмір позиції обмежено ліквідністю: не більше 1% добового обсягу монети.');
     }
     if (p.intermediateResistance != null) {
       warnings.add('Проміжний опір на \$${_fmt(p.intermediateResistance!)} — можлива пауза до TP1.');
@@ -816,7 +1020,7 @@ class CryptoMarketScannerService {
         'RSI(14D) ${m.rsi.toStringAsFixed(1)} ($rsiSign${m.rsiDelta.toStringAsFixed(1)} за 3 дні). '
         'Волатильність ATR ${m.atrPct.toStringAsFixed(1)}%/день; стиснення ATR5/ATR30 = ${m.atrRatio.toStringAsFixed(2)}, '
         'ширина Боллінджера на ${(m.bbWidthPctile * 100).toStringAsFixed(0)}-му перцентилі власної історії. '
-        'Від 230-денного максимуму: -${m.dd250.toStringAsFixed(1)}%.';
+        'Від максимуму за ${m.candles.length} днів: -${m.dd250.toStringAsFixed(1)}%.';
 
     final flow = 'Відносна сила проти BTC: ${_signed(m.rs30)}% за 30 днів, ${_signed(m.rs90)}% за 90 днів '
         '(без останніх 3 днів шуму). Order Flow: агресивні покупки за 7 днів ${m.takerRatio7d.toStringAsFixed(1)}% '
@@ -865,7 +1069,7 @@ class CryptoMarketScannerService {
       sector: '',
       setupType: p.setupType,
       currentPrice: m.price,
-      supportLevel: p.stop + 0.4 * m.atr14,
+      supportLevel: m.candles.lows.sublist(m.candles.length - 10).reduce(math.min),
       entryZoneMin: p.entryMin,
       entryZoneMax: p.entryMax,
       targetPrice1: p.tp1,
@@ -963,6 +1167,7 @@ class CryptoMarketScannerService {
     for (final k in raw) {
       final closeTime = (k[6] as num).toInt();
       if (closeTime > nowMs) continue; // поточна незакрита свічка спотворює RSI/обсяги/тіні
+      c.openTimes.add((k[0] as num).toInt());
       c.opens.add(_d(k[1]));
       c.highs.add(_d(k[2]));
       c.lows.add(_d(k[3]));
@@ -1099,22 +1304,6 @@ class CryptoMarketScannerService {
       ema = prices[i] * k + ema * (1.0 - k);
     }
     return ema;
-  }
-
-  static List<double> _emaSeries(List<double> prices, int period) {
-    final out = List<double>.filled(prices.length, 0.0);
-    if (prices.isEmpty) return out;
-    final k = 2.0 / (period + 1);
-    double running = 0;
-    for (int i = 0; i < prices.length; i++) {
-      if (i < period) {
-        running += prices[i];
-        out[i] = running / (i + 1);
-      } else {
-        out[i] = prices[i] * k + out[i - 1] * (1.0 - k);
-      }
-    }
-    return out;
   }
 
   static double _atr(List<double> highs, List<double> lows, List<double> closes, int period) {

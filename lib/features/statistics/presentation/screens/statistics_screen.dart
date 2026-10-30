@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/models/models.dart';
@@ -130,20 +132,36 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(70),
+            blurRadius: 8,
+            offset: const Offset(0, 3),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ListTile(
-            title: Text(title, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold, fontSize: 16)),
+            title: Text(
+              title,
+              style: GoogleFonts.chakraPetch(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w800,
+                fontSize: 14,
+                letterSpacing: 0.6,
+              ),
+            ),
             leading: Icon(icon, color: iconColor),
             trailing: Icon(isExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.textSecondary),
             onTap: onTap,
           ),
           if (isExpanded)
             Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: child,
             ),
         ],
@@ -160,14 +178,37 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Статистика',
-          style: TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'POWER ANALYTICS // Q4',
+              style: GoogleFonts.chakraPetch(
+                color: AppColors.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+              ),
+            ),
+            Text(
+              'HARD WORK STATS',
+              style: GoogleFonts.chakraPetch(
+                color: AppColors.textPrimary,
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined, color: AppColors.textSecondary, size: 22),
+            tooltip: 'Налаштування',
+            onPressed: () => context.go('/settings'),
+          ),
+          const SizedBox(width: 8),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -176,26 +217,26 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
             const SizedBox(height: 16),
             Expanded(
               child: ListView(
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 children: [
                   _buildExpandableSection(
-                    title: 'Прогрес задач',
+                    title: 'ПРОГРЕС ЗАДАЧ // АНАЛІТИКА',
                     icon: Icons.check_circle_outline_rounded,
-                    iconColor: AppColors.greenTask,
+                    iconColor: AppColors.accent,
                     isExpanded: _isTasksExpanded,
                     onTap: () => setState(() => _isTasksExpanded = !_isTasksExpanded),
                     child: Column(
                       children: [
                         const TaskExecutionMatrixCard(),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 16),
                         _buildPieChartSection(ref, period),
-                        const SizedBox(height: 24),
+                        const SizedBox(height: 16),
                         _buildPerfectDaysSection(ref, period),
                       ],
                     ),
                   ),
                   _buildExpandableSection(
-                    title: 'Зал слави звичок',
+                    title: 'ЗАЛ СЛАВИ ЗВИЧОК // СТРІКИ',
                     icon: Icons.emoji_events_rounded,
                     iconColor: Colors.orange,
                     isExpanded: _isHabitsExpanded,
@@ -203,7 +244,7 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                     child: const _HabitHallOfFame(),
                   ),
                   _buildExpandableSection(
-                    title: 'Час виконання',
+                    title: 'ЧАС ВИКОНАННЯ // ГОДИНИ',
                     icon: Icons.timer_rounded,
                     iconColor: AppColors.blueTask,
                     isExpanded: _isTimeExpanded,
@@ -211,7 +252,7 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                     child: _buildTimeAnalyticsSection(ref, period),
                   ),
                   _buildExpandableSection(
-                    title: 'Фінанси',
+                    title: 'ФІНАНСИ // CASHFLOW',
                     icon: Icons.account_balance_wallet_rounded,
                     iconColor: AppColors.yellowTask,
                     isExpanded: _isFinanceExpanded,
@@ -219,7 +260,7 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                     child: _buildFinancialTrackerSection(ref, period),
                   ),
                   _buildExpandableSection(
-                    title: 'Ментал (Успіх)',
+                    title: 'МЕНТАЛ // ДИСЦИПЛІНА',
                     icon: Icons.self_improvement_rounded,
                     iconColor: AppColors.accent,
                     isExpanded: _isMindsetExpanded,
@@ -227,7 +268,7 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
                     child: _buildSuccessBalanceSection(ref, period),
                   ),
                   _buildExpandableSection(
-                    title: 'Калорії та Нутрієнти',
+                    title: 'КАЛОРІЇ ТА НУТРІЄНТИ // ПАЛИВО',
                     icon: Icons.local_fire_department_rounded,
                     iconColor: Colors.redAccent,
                     isExpanded: _isCaloriesExpanded,
@@ -246,11 +287,13 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
 
   Widget _buildPeriodSelector(WidgetRef ref, StatPeriod currentPeriod) {
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.symmetric(horizontal: 16),
       child: Container(
+        padding: const EdgeInsets.all(3),
         decoration: BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.border, width: 1.5),
         ),
         child: Row(
           children: [
@@ -270,18 +313,19 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
       child: GestureDetector(
         onTap: () => ref.read(statPeriodProvider.notifier).state = period,
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
+          padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             color: isSelected ? AppColors.accent : Colors.transparent,
-            borderRadius: BorderRadius.circular(12),
+            borderRadius: BorderRadius.circular(7),
           ),
           child: Text(
-            label,
+            label.toUpperCase(),
             textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected ? Colors.white : AppColors.textSecondary,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-              fontSize: 12,
+            style: GoogleFonts.chakraPetch(
+              color: isSelected ? Colors.black : AppColors.textSecondary,
+              fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+              fontSize: 11,
+              letterSpacing: 0.6,
             ),
           ),
         ),
@@ -838,27 +882,24 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
         return settingsAsync.when(
           data: (settings) {
             return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 _buildMacrosAverages(macrosList, settings),
-                const SizedBox(height: 24),
+                const SizedBox(height: 16),
                 _buildMacrosBarChart(macrosList, settings, start, end, period),
               ],
             );
           },
-          loading: () => const Center(child: CircularProgressIndicator()),
-          error: (err, stack) => Text("Помилка: $err", style: const TextStyle(color: Colors.red)),
+          loading: () => const Center(child: CircularProgressIndicator(color: AppColors.accent)),
+          error: (err, stack) => Text("Помилка: $err", style: GoogleFonts.chakraPetch(color: Colors.red)),
         );
       },
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, stack) => Text("Помилка: $err", style: const TextStyle(color: Colors.red)),
+      loading: () => const Center(child: CircularProgressIndicator(color: AppColors.accent)),
+      error: (err, stack) => Text("Помилка: $err", style: GoogleFonts.chakraPetch(color: Colors.red)),
     );
   }
 
   Widget _buildMacrosAverages(List<DailyMacros> macrosList, UserSettings settings) {
-    if (macrosList.isEmpty) {
-      return const Text('Немає даних за цей період', style: TextStyle(color: AppColors.textSecondary));
-    }
-
     int totalCal = 0;
     int totalPro = 0;
     int totalFat = 0;
@@ -871,36 +912,196 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
       totalCarb += m.carbs;
     }
 
-    final avgCal = totalCal ~/ macrosList.length;
-    final avgPro = totalPro ~/ macrosList.length;
-    final avgFat = totalFat ~/ macrosList.length;
-    final avgCarb = totalCarb ~/ macrosList.length;
+    final int count = macrosList.isEmpty ? 1 : macrosList.length;
+    final avgCal = totalCal ~/ count;
+    final avgPro = totalPro ~/ count;
+    final avgFat = totalFat ~/ count;
+    final avgCarb = totalCarb ~/ count;
+
+    final targetCal = settings.targetCalories > 0 ? settings.targetCalories : 2400;
+    final targetPro = settings.targetProtein > 0 ? settings.targetProtein : 160;
+    final targetFat = settings.targetFats > 0 ? settings.targetFats : 70;
+    final targetCarb = settings.targetCarbs > 0 ? settings.targetCarbs : 280;
+
+    final calProgress = (avgCal / targetCal).clamp(0.0, 1.0);
+    final proProgress = (avgPro / targetPro).clamp(0.0, 1.0);
+    final fatProgress = (avgFat / targetFat).clamp(0.0, 1.0);
+    final carbProgress = (avgCarb / targetCarb).clamp(0.0, 1.0);
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Text('Середнє споживання:', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+        // Top Card: Calorie Gauge + Target info (matching style3_tab3_calories)
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceVariant,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.border, width: 1.5),
+          ),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 84,
+                height: 84,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CircularProgressIndicator(
+                      value: calProgress,
+                      backgroundColor: const Color(0xFF1C2029),
+                      valueColor: const AlwaysStoppedAnimation<Color>(AppColors.accent),
+                      strokeWidth: 8,
+                      strokeCap: StrokeCap.round,
+                    ),
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          '$avgCal',
+                          style: GoogleFonts.chakraPetch(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                        Text(
+                          'ККАЛ',
+                          style: GoogleFonts.chakraPetch(
+                            color: AppColors.accent,
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '$avgCal / $targetCal ККАЛ',
+                      style: GoogleFonts.chakraPetch(
+                        color: Colors.white,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.5,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      avgCal <= targetCal
+                          ? 'ДЕФІЦИТ: -${targetCal - avgCal} ККАЛ'
+                          : 'ПРОФІЦИТ: +${avgCal - targetCal} ККАЛ',
+                      style: GoogleFonts.chakraPetch(
+                        color: AppColors.accent,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'РЕЖИМ: АТЛЕТИЧНЕ ПАЛИВО',
+                      style: GoogleFonts.chakraPetch(
+                        color: AppColors.textSecondary,
+                        fontSize: 10,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+
         const SizedBox(height: 12),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            _buildAvgStat('Калорії', avgCal, settings.targetCalories, AppColors.accent),
-            _buildAvgStat('Білки', avgPro, settings.targetProtein, AppColors.blueTask),
-            _buildAvgStat('Жири', avgFat, settings.targetFats, AppColors.yellowTask),
-            _buildAvgStat('Вугл', avgCarb, settings.targetCarbs, AppColors.greenTask),
-          ],
+
+        // Horizontal Macro Progress Bars (matching style3_tab3_calories)
+        Container(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: AppColors.surfaceVariant,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppColors.border, width: 1.5),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'РОЗПОДІЛ МАКРОНУТРІЄНТІВ (Б / Ж / В)',
+                style: GoogleFonts.chakraPetch(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.6,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _buildMacroBarRow('БІЛОК (PROTEIN)', '$avgPro / $targetPro г', proProgress, AppColors.accent),
+              const SizedBox(height: 10),
+              _buildMacroBarRow('ЖИРИ (FATS)', '$avgFat / $targetFat г', fatProgress, const Color(0xFFE2E8F0)),
+              const SizedBox(height: 10),
+              _buildMacroBarRow('ВУГЛЕВОДИ (CARBS)', '$avgCarb / $targetCarb г', carbProgress, const Color(0xFF94A3B8)),
+            ],
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildAvgStat(String label, int avg, int target, Color color) {
+  Widget _buildMacroBarRow(String title, String val, double ratio, Color color) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.chakraPetch(
+                  color: const Color(0xFFCBD5E1),
+                  fontSize: 10,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Text(
+              val,
+              style: GoogleFonts.chakraPetch(
+                color: color,
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 4),
-        Text('$avg', style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
-        Text('з $target', style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(2),
+          child: LinearProgressIndicator(
+            value: ratio.clamp(0.0, 1.0),
+            minHeight: 8,
+            backgroundColor: const Color(0xFF0F1218),
+            valueColor: AlwaysStoppedAnimation<Color>(color),
+          ),
+        ),
       ],
     );
   }
@@ -914,49 +1115,147 @@ class _StatisticsScreenState extends ConsumerState<StatisticsScreen> {
     }
 
     if (dates.length > 31) {
-      return const Text('Графік доступний лише для тижня/місяця', style: TextStyle(color: AppColors.textSecondary));
+      return const SizedBox.shrink();
     }
 
-    final maxCal = math.max(settings.targetCalories.toDouble(), macrosList.fold<double>(0, (prev, el) => math.max(prev, el.calories.toDouble())));
+    final maxCal = math.max(
+      settings.targetCalories.toDouble(),
+      macrosList.fold<double>(0, (prev, el) => math.max(prev, el.calories.toDouble())),
+    );
 
-    return SizedBox(
-      height: 150,
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: dates.map((d) {
-          final dateStr = "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
-          final macro = macrosList.firstWhere((m) => m.dateStr == dateStr, orElse: () => DailyMacros.empty(dateStr));
-          
-          final isOver = macro.calories > settings.targetCalories;
-          final barColor = isOver ? AppColors.redTask : AppColors.greenTask;
-          final heightFactor = maxCal > 0 ? (macro.calories / maxCal) : 0.0;
-
-          return Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                if (macro.calories > 0)
-                  Text('${macro.calories}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 8), maxLines: 1, overflow: TextOverflow.clip),
-                const SizedBox(height: 4),
-                Expanded(
-                  child: FractionallySizedBox(
-                    alignment: Alignment.bottomCenter,
-                    heightFactor: heightFactor,
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 2),
-                      decoration: BoxDecoration(
-                        color: macro.calories == 0 ? AppColors.surfaceVariant : barColor,
-                        borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-                      ),
-                    ),
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0D0F14),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                child: Text(
+                  'ДЕННЕ СПОЖИВАННЯ // ГІСТОГРАМА',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.chakraPetch(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text('${d.day}', style: const TextStyle(color: AppColors.textSecondary, fontSize: 10)),
-              ],
-            ),
-          );
-        }).toList(),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'ЦІЛЬ: ${settings.targetCalories} ККАЛ',
+                style: GoogleFonts.chakraPetch(
+                  color: AppColors.accent,
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final double barWidth = dates.length <= 7
+                  ? (constraints.maxWidth / math.max(1, dates.length))
+                  : 32.0;
+              final double totalWidth = math.max(constraints.maxWidth, dates.length * barWidth);
+
+              return SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: SizedBox(
+                  width: totalWidth,
+                  height: 140,
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: dates.map((d) {
+                      final dateStr =
+                          "${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}";
+                      final macro = macrosList.firstWhere(
+                        (m) => m.dateStr == dateStr,
+                        orElse: () => DailyMacros.empty(dateStr),
+                      );
+
+                      final double heightFactor = maxCal > 0
+                          ? (macro.calories / maxCal).clamp(0.04, 1.0)
+                          : 0.04;
+                      final bool isTargetReached =
+                          macro.calories >= settings.targetCalories &&
+                              settings.targetCalories > 0;
+
+                      return SizedBox(
+                        width: barWidth,
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 2),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            children: [
+                              if (macro.calories > 0)
+                                FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  child: Text(
+                                    '${macro.calories}',
+                                    style: GoogleFonts.chakraPetch(
+                                      color: isTargetReached
+                                          ? AppColors.accent
+                                          : const Color(0xFF9DA4B0),
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                    maxLines: 1,
+                                  ),
+                                ),
+                              const SizedBox(height: 3),
+                              Expanded(
+                                child: Align(
+                                  alignment: Alignment.bottomCenter,
+                                  child: FractionallySizedBox(
+                                    heightFactor: heightFactor,
+                                    widthFactor: dates.length > 7 ? 0.75 : 0.65,
+                                    child: Container(
+                                      decoration: BoxDecoration(
+                                        color: macro.calories == 0
+                                            ? const Color(0xFF1E212B)
+                                            : (isTargetReached
+                                                ? AppColors.accent
+                                                : const Color(0xFF5A6275)),
+                                        borderRadius: BorderRadius.circular(2),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(height: 4),
+                              FittedBox(
+                                fit: BoxFit.scaleDown,
+                                child: Text(
+                                  '${d.day}',
+                                  style: GoogleFonts.chakraPetch(
+                                    color: const Color(0xFF9DA4B0),
+                                    fontSize: 9,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                  maxLines: 1,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
       ),
     );
   }

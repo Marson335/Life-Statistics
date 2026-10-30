@@ -431,9 +431,10 @@ class NotificationExpenseService {
       return null;
     }
 
-    // 1. Normalize spaces, non-breaking spaces (\u00A0), en-dash (\u2013), em-dash (\u2014), minus (\u2212)
-    final cleanTitle = title.replaceAll('\u00A0', ' ').trim();
-    final cleanContent = content.replaceAll('\u00A0', ' ').trim();
+    // 1. Normalize all spaces (regular, non-breaking \u00A0, narrow \u202F, figure \u2007, thin \u2009, etc.)
+    final spaceRegex = RegExp(r'[\u00A0\u202F\u2007\u2009\u200A\uFEFF]');
+    final cleanTitle = title.replaceAll(spaceRegex, ' ').trim();
+    final cleanContent = content.replaceAll(spaceRegex, ' ').trim();
     final combinedText = '$cleanTitle $cleanContent';
     final lowerCombined = combinedText.toLowerCase();
 
@@ -478,17 +479,34 @@ class NotificationExpenseService {
     final expenseKeywords = [
       'списано',
       'списання',
+      'списание',
+      'списана',
       'оплата',
+      'оплачено',
       'купівля',
       'покупка',
+      'покупку',
       'зняття',
+      'снятие',
+      'знято',
+      'снято',
       'витрата',
-      'переказ',
+      'витрачено',
+      'расход',
+      'вихідний переказ',
+      'исходящий перевод',
+      'переказ на',
+      'перевод на',
       'платежі',
       'платіж',
+      'платеж',
       'комуналка',
+      'комунальні',
       'поповнення мобільного',
+      'пополнение мобильного',
+      'пополнение телефона',
       'кешбек', // In Monobank, "☕ 58.00₴ Кешбек 1.16₴" is a purchase with cashback reward
+      'кешбэк',
       'oplata',
       'kupivlya',
       'pokupka',
@@ -496,33 +514,114 @@ class NotificationExpenseService {
       'purchase',
       'spent',
       'charge',
-      'transfer',
     ];
 
     final incomeKeywords = [
+      // Salary, wages & earnings (UA, RU, EN)
+      'зарплата',
+      'зарплати',
+      'зарплату',
+      'заробітна плата',
+      'заробітної плати',
+      'заработная плата',
+      'зарплат',
+      'з/п',
+      'зп',
+      'salary',
+      'аванс',
+      'премія',
+      'премия',
+      'бонус',
+      'гонорар',
+      'дохід',
+      'доход',
+      'прибуток',
+      'прибыль',
+      'стипендія',
+      'стипендия',
+      'пенсія',
+      'пенсия',
+      'соцвиплата',
+      'соц. виплата',
+
+      // Crediting & incoming transfers
       'зарахування',
+      'зараховано',
+      'зарахована',
+      'зарахований',
+      'зачисление',
+      'зачислено',
+      'зачислена',
+      'приход',
+      'надходження',
+      'поступление',
+      'поступило',
+      'поступили',
+      'надійшло',
+      'надійшов',
+      'надійшли',
+      'отримано',
+      'получено',
+      'одержано',
+      'credited',
+      'received',
+      'incoming',
+
+      // Top-up
       'поповнення картки',
       'поповнення рахунку',
-      'надходження',
-      'зарплата',
-      'зарплат',
+      'пополнение карты',
+      'пополнение счета',
+      'пополнение счёта',
+      'поповнено',
+      'пополнено',
+      'top-up',
+      'top up',
+
+      // Transfers & Senders
       'переказ від',
+      'перевод от',
+      'вхідний переказ',
+      'входящий перевод',
+      'переказ коштів від',
+      'переказ одержано',
+      'отримано переказ',
+      'відправник:',
+      'отправитель:',
+      'платник:',
       'від:',
+      'от:',
+      'from:',
+      'transfer from',
+      'incoming transfer',
+
+      // Payouts & Refunds
       'виплата кешбеку',
       'виведення кешбеку',
       'зарахування кешбеку',
-      'received',
-      'top-up',
-      'credited',
-      'incoming',
-      'salary',
+      'выплата кешбэка',
+      'начисление кешбэка',
+      'повернення коштів',
+      'повернення покупки',
+      'возврат средств',
+      'возврат покупки',
+      'повернення',
+      'возврат',
+      'refund',
+      'reversal',
+      'виплата',
+      'выплата',
+      'виплачено',
+      'выплачено',
       'zarakhuvannia',
       'popovnennia',
     ];
 
-    // Check standalone "поповнення" only when not followed by "мобільного"
-    final hasStandaloneTopUp = lowerCombined.contains('поповнення') &&
-        !lowerCombined.contains('поповнення мобільного');
+    // Check standalone "поповнення" / "пополнение" only when not followed by mobile top-up
+    final hasStandaloneTopUp = (lowerCombined.contains('поповнення') || lowerCombined.contains('пополнение')) &&
+        !lowerCombined.contains('поповнення мобільного') &&
+        !lowerCombined.contains('пополнение мобильного') &&
+        !lowerCombined.contains('пополнение телефона');
 
     final hasExpenseKeyword =
         expenseKeywords.any((kw) => lowerCombined.contains(kw));
@@ -531,15 +630,18 @@ class NotificationExpenseService {
             hasStandaloneTopUp;
 
     final hasCurrency =
-        RegExp(r'(?:₴|грн|uah|\$|€)', caseSensitive: false).hasMatch(combinedText);
+        RegExp(r'(?:₴|грн|uah|\$|€|usd|eur|rub|руб)', caseSensitive: false).hasMatch(combinedText);
     final hasCardOrBankIndicator = lowerCombined.contains('monobank') ||
         lowerCombined.contains('privat') ||
         lowerCombined.contains('приват') ||
         lowerCombined.contains('картк') ||
+        lowerCombined.contains('карт') ||
         lowerCombined.contains('card') ||
         lowerCombined.contains('пумб') ||
         lowerCombined.contains('ощад') ||
         lowerCombined.contains('баланс') ||
+        lowerCombined.contains('счет') ||
+        lowerCombined.contains('рахун') ||
         RegExp(r'(?:••|\*\*|\*)\s*\d{2,4}').hasMatch(combinedText);
 
     // Must be a recognized bank app OR contain financial keywords OR (has currency + card/bank indicator)
@@ -551,30 +653,64 @@ class NotificationExpenseService {
     }
 
     // 3. Determine direction (Income vs Expense)
+    // Explicit negative sign indicates expense (e.g. "-150 ₴", "-500 UAH")
+    final hasExplicitNegativeSign = RegExp(r'[−\-–—]\s*\d+').hasMatch(cleanContent) ||
+        RegExp(r'[−\-–—]\s*\d+').hasMatch(cleanTitle);
+
+    // Explicit positive sign indicates income (e.g. "+15000", "+ 500 ₴")
+    final hasExplicitPositiveSign = RegExp(r'\+\s*\d+').hasMatch(cleanContent) ||
+        RegExp(r'\+\s*\d+').hasMatch(cleanTitle);
+
+    // Unambiguous, strong income words that should override generic phrases
+    final hasStrongIncomeSignal = lowerCombined.contains('зарплат') ||
+        lowerCombined.contains('заробітн') ||
+        lowerCombined.contains('заработная плата') ||
+        lowerCombined.contains('з/п') ||
+        lowerCombined.contains('зп') ||
+        lowerCombined.contains('salary') ||
+        lowerCombined.contains('аванс') ||
+        lowerCombined.contains('премі') ||
+        lowerCombined.contains('преми') ||
+        lowerCombined.contains('гонорар') ||
+        lowerCombined.contains('зарахування') ||
+        lowerCombined.contains('зараховано') ||
+        lowerCombined.contains('зачисление') ||
+        lowerCombined.contains('зачислено') ||
+        lowerCombined.contains('приход') ||
+        lowerCombined.contains('надходження') ||
+        lowerCombined.contains('поступление') ||
+        lowerCombined.contains('надійш') ||
+        lowerCombined.contains('переказ від') ||
+        lowerCombined.contains('перевод от') ||
+        lowerCombined.contains('вхідний переказ') ||
+        lowerCombined.contains('входящий перевод') ||
+        lowerCombined.contains('відправник') ||
+        lowerCombined.contains('отправитель') ||
+        lowerCombined.contains('платник') ||
+        lowerCombined.contains('повернення') ||
+        lowerCombined.contains('возврат') ||
+        lowerCombined.contains('виплата кешбеку') ||
+        lowerCombined.contains('виведення кешбеку') ||
+        lowerCombined.contains('зарахування кешбеку') ||
+        lowerCombined.contains('выплата кешб') ||
+        lowerCombined.contains('начисление кешб') ||
+        hasStandaloneTopUp;
+
     bool isIncome = false;
-    if (hasIncomeKeyword && !hasExpenseKeyword) {
-      isIncome = true;
-    } else if (hasIncomeKeyword &&
-        (lowerCombined.contains('виплата кешбеку') ||
-            lowerCombined.contains('виведення кешбеку') ||
-            lowerCombined.contains('зарахування кешбеку') ||
-            lowerCombined.contains('зарахування') ||
-            hasStandaloneTopUp)) {
-      isIncome = true;
-    } else if (RegExp(r'\+\s*\d+').hasMatch(cleanContent) ||
-        RegExp(r'\+\s*\d+').hasMatch(cleanTitle)) {
-      isIncome = true;
-    }
-    // Explicit negative sign indicates expense
-    if (RegExp(r'[−\-–—]\s*\d+').hasMatch(cleanContent) ||
-        RegExp(r'[−\-–—]\s*\d+').hasMatch(cleanTitle)) {
+    if (hasExplicitNegativeSign) {
       isIncome = false;
+    } else if (hasExplicitPositiveSign) {
+      isIncome = true;
+    } else if (hasStrongIncomeSignal) {
+      isIncome = true;
+    } else if (hasIncomeKeyword && !hasExpenseKeyword) {
+      isIncome = true;
     }
 
     // 4. Strip balance section so we never extract the account balance instead of the transaction amount
     final textBeforeBalance = cleanContent
         .split(RegExp(
-            r'(?:баланс|залишок|доступно|dostupno|balance)\s*:?',
+            r'(?:баланс|залишок|остаток|доступно|dostupno|balance)\s*:?',
             caseSensitive: false))
         .first
         .trim();
@@ -585,7 +721,7 @@ class NotificationExpenseService {
 
     // Pattern A: Amount followed by currency: "-150 ₴", "58.00₴", "150,00 ₴", "-21.3₴", "150.00UAH", "204,30 грн"
     final regexA = RegExp(
-      r'(?:^|[^\w])(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:₴|грн|uah|\$|€)',
+      r'(?:^|[^\w])(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)\s*(?:₴|грн|uah|\$|€|usd|eur|rub|руб)',
       caseSensitive: false,
     );
     final matchA = regexA.firstMatch(searchBody);
@@ -597,7 +733,7 @@ class NotificationExpenseService {
     // Pattern B: Currency followed by amount: "₴150.00", "$150", "€150.50"
     if (amount == null) {
       final regexB = RegExp(
-        r'(?:₴|грн|uah|\$|€)\s*(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)',
+        r'(?:₴|грн|uah|\$|€|usd|eur|rub|руб)\s*(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)',
         caseSensitive: false,
       );
       final matchB = regexB.firstMatch(searchBody);
@@ -608,10 +744,10 @@ class NotificationExpenseService {
       }
     }
 
-    // Pattern C: Action word followed by amount: "Оплата: 150.00", "Списання 200"
+    // Pattern C: Action word followed by amount: "Оплата: 150.00", "Списання 200", "Зарплата 25 000"
     if (amount == null) {
       final regexC = RegExp(
-        r'(?:оплата|oplata|списання|покупка|купівля|зняття|зарахування|поповнення|надходження|чек|платіж|переказ)\s*:?\s*(?:[+−\-–—])?\s*(\d+(?:[.,]\d{1,2})?)',
+        r'(?:оплата|oplata|списання|списание|покупка|купівля|зняття|снятие|зарахування|зараховано|зачисление|зачислено|приход|надходження|поступление|надійшло|надійшов|виплата|выплата|зарплата|зарплати|аванс|чек|платіж|платеж|переказ|перевод)\s*:?\s*(?:[+−\-–—])?\s*(\d{1,3}(?:[\s]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)',
         caseSensitive: false,
       );
       final matchC = regexC.firstMatch(searchBody);
@@ -625,7 +761,7 @@ class NotificationExpenseService {
     // Pattern D: Signed number for bank apps or Wallet: "-150" or "+15000"
     if (amount == null && (isBankPackage || hasCardOrBankIndicator)) {
       final regexD = RegExp(
-        r'(?:^|[^\w])([+−\-–—]\s*\d+(?:[.,]\d{1,2})?)',
+        r'(?:^|[^\w])([+−\-–—]\s*\d+(?:[\s]\d{3})*(?:[.,]\d{1,2})?)',
         caseSensitive: false,
       );
       final matchD = regexD.firstMatch(searchBody);
@@ -644,22 +780,57 @@ class NotificationExpenseService {
     String? merchant;
 
     if (isIncome) {
+      // 1) Match sender after indicators: "від", "от", "відправник:", "отправитель:", "платник:", "from"
       final senderMatch = RegExp(
-        r'(?:від|from)\s*:?\s*([^,.\n]+)',
+        r'(?:відправник|отправитель|платник|від|от|from)\s*:?\s*([^,\n]+)',
         caseSensitive: false,
       ).firstMatch(cleanContent);
       if (senderMatch != null) {
         var cand = senderMatch.group(1)?.trim();
         cand = cand
-            ?.split(RegExp(r'\s*(?:баланс|картк|\.\.\.)', caseSensitive: false))
+            ?.split(RegExp(r'\s*(?:баланс|залишок|остаток|доступно|dostupno|balance|картк|card|коментар|коммент|\.\.\.)', caseSensitive: false))
             .first
             .trim();
-        merchant = cand;
+        cand = cand?.replaceAll(RegExp(r'^[•–\-—:\s]+|[•–\-—:\s]+$'), '').trim();
+        // If trailing dot is a sentence period (and not a single-letter initial like "І." or "В."), remove it
+        if (cand != null && cand.endsWith('.')) {
+          final isInitial = RegExp(r'(?:^|\s|\.)\p{L}\.$', unicode: true).hasMatch(cand);
+          if (!isInitial) {
+            cand = cand.substring(0, cand.length - 1).trim();
+          }
+        }
+        if (cand != null &&
+            cand.isNotEmpty &&
+            !cand.toLowerCase().contains('баланс') &&
+            !cand.toLowerCase().contains('залишок') &&
+            !cand.toLowerCase().contains('остаток')) {
+          merchant = cand;
+        }
       }
-      if (merchant == null && lowerCombined.contains('зарплат')) {
-        merchant = 'Зарплата';
-      } else if (merchant == null && lowerCombined.contains('кешбек')) {
-        merchant = 'Кешбек';
+
+      // 2) If no merchant yet, check title / content for specific salary or income labels:
+      if (merchant == null) {
+        if (lowerCombined.contains('зарплат') ||
+            lowerCombined.contains('заробітн') ||
+            lowerCombined.contains('заработная плата') ||
+            lowerCombined.contains('з/п') ||
+            lowerCombined.contains('зп') ||
+            lowerCombined.contains('salary') ||
+            lowerCombined.contains('аванс')) {
+          merchant = 'Зарплата';
+        } else if (lowerCombined.contains('кешбек') || lowerCombined.contains('кешбэк') || lowerCombined.contains('cashback')) {
+          merchant = 'Кешбек';
+        } else if (lowerCombined.contains('премі') || lowerCombined.contains('преми')) {
+          merchant = 'Премія';
+        } else if (lowerCombined.contains('стипенд')) {
+          merchant = 'Стипендія';
+        } else if (lowerCombined.contains('повернен') || lowerCombined.contains('возврат') || lowerCombined.contains('refund')) {
+          merchant = 'Повернення коштів';
+        } else if (lowerCombined.contains('переказ') || lowerCombined.contains('перевод')) {
+          merchant = 'Вхідний переказ';
+        } else {
+          merchant = 'Дохід';
+        }
       }
     } else {
       // 1) Explicit "[Action/Currency] у / в / at / in [Merchant]" (e.g. "Оплата 520.50 ₴ у McDonald's" or "Покупка в Сільпо")
@@ -916,7 +1087,7 @@ class NotificationExpenseService {
         if (spent == null) continue;
         final amountMatches = (spent - parsed.amount).abs() < 0.01;
         final timeDiff =
-            (t.createdAt ?? t.date).difference(now).inSeconds.abs();
+            t.createdAt.difference(now).inSeconds.abs();
         if (amountMatches && timeDiff <= 900) {
           existingDuplicate = t;
           break;
@@ -944,6 +1115,24 @@ class NotificationExpenseService {
             ? 'Дохід +${parsed.amount.toStringAsFixed(0)} грн'
             : 'Витрата ${parsed.amount.toStringAsFixed(0)} грн');
 
+    String? defaultTag;
+    if (parsed.isIncome) {
+      final t = '${parsed.merchant ?? ""} $taskTitle ${parsed.rawText}'.toLowerCase();
+      if (t.contains('зарплат') ||
+          t.contains('заробітн') ||
+          t.contains('з/п') ||
+          t.contains('salary') ||
+          t.contains('аванс')) {
+        defaultTag = 'Зарплата';
+      } else if (t.contains('кешбек') || t.contains('кешбэк') || t.contains('cashback')) {
+        defaultTag = 'Кешбек';
+      } else if (t.contains('премі') || t.contains('преми')) {
+        defaultTag = 'Премія';
+      } else if (t.contains('стипенд')) {
+        defaultTag = 'Стипендія';
+      }
+    }
+
     final task = Task(
       id: now.millisecondsSinceEpoch.toString(),
       userId: user.uid,
@@ -952,7 +1141,7 @@ class NotificationExpenseService {
       date: now,
       moneySpent: !parsed.isIncome ? parsed.amount : null,
       moneyEarned: parsed.isIncome ? parsed.amount : null,
-      tag: null, // Left null so user can choose tag!
+      tag: defaultTag, // Pre-assigns 'Зарплата' if recognized, or leaves null so user can choose tag
       createdAt: now,
       isCompleted: true,
     );

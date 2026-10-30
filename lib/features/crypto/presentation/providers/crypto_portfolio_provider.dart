@@ -11,6 +11,9 @@ import '../../data/crypto_repository.dart';
 import '../../data/models/crypto_models.dart';
 import '../../data/crypto_portfolio_history_service.dart';
 import '../../data/crypto_market_scanner_service.dart';
+import '../../data/crypto_fundamental_analysis_service.dart';
+import '../../data/crypto_alert_service.dart';
+import '../../data/crypto_radar_journal_service.dart';
 
 enum TimePeriod { h24, d7, d30, d90, y1, all }
 
@@ -20,6 +23,9 @@ class CryptoPortfolioState {
   final bool isScanningMarket;
   final String? scanProgressStatus;
   final double scanProgress;
+  final bool isAnalyzingFundamentals;
+  final String? fundamentalProgressStatus;
+  final double fundamentalProgress;
   final bool isLive;
   final PortfolioOverview overview;
   final Map<String, double> binanceSpot;
@@ -29,11 +35,14 @@ class CryptoPortfolioState {
   final List<BinanceEarnItem> binanceEarnItems;
   final List<Web3Asset> solanaAssets;
   final List<Web3Asset> evmAssets;
+  final List<Web3Asset> btcAssets;
   final List<DcaTransaction> dcaTransactions;
+  final Map<String, double> livePrices;
   final TimePeriod selectedPeriod;
   final PortfolioHistoricalDataset? historicalDataset;
   final GroqAuditReport? auditReport;
   final AiMarketRadarReport? radarReport;
+  final FundamentalAnalysisReport? fundamentalReport;
   final String? errorMessage;
   final DateTime? lastUpdated;
 
@@ -43,6 +52,9 @@ class CryptoPortfolioState {
     this.isScanningMarket = false,
     this.scanProgressStatus,
     this.scanProgress = 0.0,
+    this.isAnalyzingFundamentals = false,
+    this.fundamentalProgressStatus,
+    this.fundamentalProgress = 0.0,
     required this.isLive,
     required this.overview,
     required this.binanceSpot,
@@ -52,11 +64,14 @@ class CryptoPortfolioState {
     required this.binanceEarnItems,
     required this.solanaAssets,
     required this.evmAssets,
+    this.btcAssets = const [],
     required this.dcaTransactions,
+    this.livePrices = const {},
     required this.selectedPeriod,
     this.historicalDataset,
     this.auditReport,
     this.radarReport,
+    this.fundamentalReport,
     this.errorMessage,
     this.lastUpdated,
   });
@@ -68,6 +83,9 @@ class CryptoPortfolioState {
       isScanningMarket: false,
       scanProgressStatus: null,
       scanProgress: 0.0,
+      isAnalyzingFundamentals: false,
+      fundamentalProgressStatus: null,
+      fundamentalProgress: 0.0,
       isLive: false,
       overview: PortfolioOverview.empty(),
       binanceSpot: {},
@@ -77,11 +95,14 @@ class CryptoPortfolioState {
       binanceEarnItems: [],
       solanaAssets: [],
       evmAssets: [],
+      btcAssets: [],
       dcaTransactions: [],
+      livePrices: {},
       selectedPeriod: TimePeriod.h24,
       historicalDataset: null,
       auditReport: null,
       radarReport: null,
+      fundamentalReport: null,
       errorMessage: null,
       lastUpdated: null,
     );
@@ -93,6 +114,9 @@ class CryptoPortfolioState {
     bool? isScanningMarket,
     String? scanProgressStatus,
     double? scanProgress,
+    bool? isAnalyzingFundamentals,
+    String? fundamentalProgressStatus,
+    double? fundamentalProgress,
     bool? isLive,
     PortfolioOverview? overview,
     Map<String, double>? binanceSpot,
@@ -102,11 +126,14 @@ class CryptoPortfolioState {
     List<BinanceEarnItem>? binanceEarnItems,
     List<Web3Asset>? solanaAssets,
     List<Web3Asset>? evmAssets,
+    List<Web3Asset>? btcAssets,
     List<DcaTransaction>? dcaTransactions,
+    Map<String, double>? livePrices,
     TimePeriod? selectedPeriod,
     PortfolioHistoricalDataset? historicalDataset,
     GroqAuditReport? auditReport,
     AiMarketRadarReport? radarReport,
+    FundamentalAnalysisReport? fundamentalReport,
     String? errorMessage,
     DateTime? lastUpdated,
   }) {
@@ -116,6 +143,9 @@ class CryptoPortfolioState {
       isScanningMarket: isScanningMarket ?? this.isScanningMarket,
       scanProgressStatus: scanProgressStatus ?? this.scanProgressStatus,
       scanProgress: scanProgress ?? this.scanProgress,
+      isAnalyzingFundamentals: isAnalyzingFundamentals ?? this.isAnalyzingFundamentals,
+      fundamentalProgressStatus: fundamentalProgressStatus ?? this.fundamentalProgressStatus,
+      fundamentalProgress: fundamentalProgress ?? this.fundamentalProgress,
       isLive: isLive ?? this.isLive,
       overview: overview ?? this.overview,
       binanceSpot: binanceSpot ?? this.binanceSpot,
@@ -125,11 +155,14 @@ class CryptoPortfolioState {
       binanceEarnItems: binanceEarnItems ?? this.binanceEarnItems,
       solanaAssets: solanaAssets ?? this.solanaAssets,
       evmAssets: evmAssets ?? this.evmAssets,
+      btcAssets: btcAssets ?? this.btcAssets,
       dcaTransactions: dcaTransactions ?? this.dcaTransactions,
+      livePrices: livePrices ?? this.livePrices,
       selectedPeriod: selectedPeriod ?? this.selectedPeriod,
       historicalDataset: historicalDataset ?? this.historicalDataset,
       auditReport: auditReport ?? this.auditReport,
       radarReport: radarReport ?? this.radarReport,
+      fundamentalReport: fundamentalReport ?? this.fundamentalReport,
       errorMessage: errorMessage,
       lastUpdated: lastUpdated ?? this.lastUpdated,
     );
@@ -149,11 +182,13 @@ class CryptoPortfolioState {
 
     for (final sym in grouped.keys) {
       final txList = grouped[sym]!;
-      // Знаходимо актуальну ціну
-      double currentPrice = 0.0;
-      final match = overview.holdings.where((h) => h.symbol.toUpperCase() == sym);
-      if (match.isNotEmpty) {
-        currentPrice = match.first.currentPrice;
+      // Знаходимо актуальну ціну: пріоритет livePrices (WebSocket стрім), далі holdings, далі ціна закупки
+      double currentPrice = livePrices[sym] ?? 0.0;
+      if (currentPrice <= 0) {
+        final match = overview.holdings.where((h) => h.symbol.toUpperCase() == sym);
+        if (match.isNotEmpty) {
+          currentPrice = match.first.currentPrice;
+        }
       }
       if (currentPrice <= 0 && txList.isNotEmpty) {
         currentPrice = txList.first.buyPrice;
@@ -184,8 +219,8 @@ class CryptoPortfolioState {
           walletType: tx.walletType,
           notes: tx.notes,
           currentPrice: currentPrice,
-          pnlPct: double.parse(tranchePnlPct.toStringAsFixed(2)),
-          pnlUsd: double.parse(tranchePnlUsd.toStringAsFixed(2)),
+          pnlPct: tranchePnlPct,
+          pnlUsd: tranchePnlUsd,
         ));
       }
 
@@ -200,12 +235,12 @@ class CryptoPortfolioState {
       result.add(DcaGroupedCoin(
         symbol: sym,
         totalAmount: totalAmount,
-        avgEntryPrice: double.parse(avgEntryPrice.toStringAsFixed(4)),
-        totalCost: double.parse(totalCost.toStringAsFixed(2)),
+        avgEntryPrice: avgEntryPrice,
+        totalCost: totalCost,
         currentPrice: currentPrice,
-        totalValueUsd: double.parse(totalValueUsd.toStringAsFixed(2)),
-        pnlUsd: double.parse(pnlUsd.toStringAsFixed(2)),
-        pnlPct: double.parse(pnlPct.toStringAsFixed(2)),
+        totalValueUsd: totalValueUsd,
+        pnlUsd: pnlUsd,
+        pnlPct: pnlPct,
         tranches: tranches,
       ));
     }
@@ -215,17 +250,161 @@ class CryptoPortfolioState {
     return result;
   }
 
-  /// Всі груповані DCA монети
-  List<DcaGroupedCoin> get groupedDcaCoins => _groupTransactions(dcaTransactions);
+  bool _isWeb3Wallet(String walletType) {
+    final w = walletType.toUpperCase();
+    return w.startsWith('WEB3') ||
+        w.contains('ON-CHAIN') ||
+        w.contains('METAMASK') ||
+        w.contains('EVM') ||
+        w.contains('SOLANA') ||
+        w == 'BTC';
+  }
+
+  bool _isBinanceWallet(String walletType) {
+    final w = walletType.toUpperCase();
+    return w == 'BINANCE' || w == 'BINANCE SPOT' || w.contains('CONVERT');
+  }
+
+  /// Всі груповані DCA монети (Binance, Web3 On-chain, Ручні)
+  List<DcaGroupedCoin> get groupedDcaCoins {
+    final allTxs = List<DcaTransaction>.from(dcaTransactions);
+    final existingSymbols = allTxs.map((t) => t.symbol.toUpperCase()).toSet();
+    final now = DateTime.now();
+
+    // Автоматично інтегруємо виявлені On-chain активи Web3, якщо по них ще немає окремих транзакцій
+    for (final btc in btcAssets) {
+      if (btc.amount > 0.000001 && !existingSymbols.contains('BTC')) {
+        final p = btc.priceUsd > 0 ? btc.priceUsd : (livePrices['BTC'] ?? 0.0);
+        allTxs.add(DcaTransaction(
+          id: 'web3_auto_btc',
+          symbol: 'BTC',
+          walletType: 'Web3 (Bitcoin On-chain)',
+          amount: btc.amount,
+          buyPrice: p,
+          fee: 0.0,
+          txDate: now,
+          notes: 'Автоматичний баланс On-chain Bitcoin гаманця',
+        ));
+      }
+    }
+
+    for (final a in evmAssets) {
+      final sym = a.symbol.toUpperCase();
+      if (a.amount > 0.000001 && !existingSymbols.contains(sym)) {
+        double p = a.priceUsd > 0 ? a.priceUsd : (livePrices[sym] ?? 0.0);
+        if (p <= 0 && (sym == 'WBTC' || sym == 'BTCB' || sym == 'TBTC' || sym == 'CBBTC' || sym == 'BTC')) {
+          p = livePrices['BTC'] ?? 0.0;
+        } else if (p <= 0 && (sym == 'WETH' || sym == 'ETH')) {
+          p = livePrices['ETH'] ?? 0.0;
+        }
+        allTxs.add(DcaTransaction(
+          id: 'web3_auto_${sym.toLowerCase()}',
+          symbol: sym,
+          walletType: 'Web3 (MetaMask / EVM)',
+          amount: a.amount,
+          buyPrice: p,
+          fee: 0.0,
+          txDate: now,
+          notes: 'Автоматичний баланс MetaMask гаманця',
+        ));
+      }
+    }
+
+    for (final a in solanaAssets) {
+      final sym = a.symbol.toUpperCase();
+      if (a.amount > 0.000001 && !existingSymbols.contains(sym)) {
+        final p = a.priceUsd > 0 ? a.priceUsd : (livePrices[sym] ?? 0.0);
+        allTxs.add(DcaTransaction(
+          id: 'web3_auto_${sym.toLowerCase()}',
+          symbol: sym,
+          walletType: 'Web3 (Solana)',
+          amount: a.amount,
+          buyPrice: p,
+          fee: 0.0,
+          txDate: now,
+          notes: 'Автоматичний баланс Solana гаманця',
+        ));
+      }
+    }
+
+    return _groupTransactions(allTxs);
+  }
 
   /// Тільки транзакції з біржі Binance (Spot & Convert FIFO)
   List<DcaGroupedCoin> get binanceDcaCoins => _groupTransactions(
-        dcaTransactions.where((t) => t.walletType == 'Binance Spot' || t.walletType == 'BINANCE').toList(),
+        dcaTransactions.where((t) => _isBinanceWallet(t.walletType)).toList(),
       );
+
+  /// Тільки криптовалюти з некастодіальних Web3 гаманців (Bitcoin On-chain, MetaMask EVM, Solana)
+  List<DcaGroupedCoin> get web3DcaCoins {
+    final web3Txs = dcaTransactions.where((t) => _isWeb3Wallet(t.walletType)).toList();
+    final existingSymbols = web3Txs.map((t) => t.symbol.toUpperCase()).toSet();
+    final List<DcaTransaction> syntheticTxs = [];
+    final now = DateTime.now();
+
+    for (final btc in btcAssets) {
+      if (btc.amount > 0.000001 && !existingSymbols.contains('BTC')) {
+        final p = btc.priceUsd > 0 ? btc.priceUsd : (livePrices['BTC'] ?? 0.0);
+        syntheticTxs.add(DcaTransaction(
+          id: 'web3_auto_btc',
+          symbol: 'BTC',
+          walletType: 'Web3 (Bitcoin On-chain)',
+          amount: btc.amount,
+          buyPrice: p,
+          fee: 0.0,
+          txDate: now,
+          notes: 'Автоматичний баланс On-chain Bitcoin гаманця',
+        ));
+      }
+    }
+
+    for (final a in evmAssets) {
+      final sym = a.symbol.toUpperCase();
+      if (a.amount > 0.000001 && !existingSymbols.contains(sym)) {
+        double p = a.priceUsd > 0 ? a.priceUsd : (livePrices[sym] ?? 0.0);
+        if (p <= 0 && (sym == 'WBTC' || sym == 'BTCB' || sym == 'TBTC' || sym == 'CBBTC' || sym == 'BTC')) {
+          p = livePrices['BTC'] ?? 0.0;
+        } else if (p <= 0 && (sym == 'WETH' || sym == 'ETH')) {
+          p = livePrices['ETH'] ?? 0.0;
+        }
+        syntheticTxs.add(DcaTransaction(
+          id: 'web3_auto_${sym.toLowerCase()}',
+          symbol: sym,
+          walletType: 'Web3 (MetaMask / EVM)',
+          amount: a.amount,
+          buyPrice: p,
+          fee: 0.0,
+          txDate: now,
+          notes: 'Автоматичний баланс MetaMask гаманця',
+        ));
+      }
+    }
+
+    for (final a in solanaAssets) {
+      final sym = a.symbol.toUpperCase();
+      if (a.amount > 0.000001 && !existingSymbols.contains(sym)) {
+        final p = a.priceUsd > 0 ? a.priceUsd : (livePrices[sym] ?? 0.0);
+        syntheticTxs.add(DcaTransaction(
+          id: 'web3_auto_${sym.toLowerCase()}',
+          symbol: sym,
+          walletType: 'Web3 (Solana)',
+          amount: a.amount,
+          buyPrice: p,
+          fee: 0.0,
+          txDate: now,
+          notes: 'Автоматичний баланс Solana гаманця',
+        ));
+      }
+    }
+
+    return _groupTransactions([...web3Txs, ...syntheticTxs]);
+  }
 
   /// Тільки додані користувачем власноруч (Ручні DCA)
   List<DcaGroupedCoin> get manualDcaCoins => _groupTransactions(
-        dcaTransactions.where((t) => t.walletType != 'Binance Spot' && t.walletType != 'BINANCE').toList(),
+        dcaTransactions
+            .where((t) => !_isBinanceWallet(t.walletType) && !_isWeb3Wallet(t.walletType))
+            .toList(),
       );
 
   /// Підсумкові показники для DCA картки
@@ -302,12 +481,30 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       );
       final web3Svc = Web3Service();
 
+      String evmAddr = settings.evmAddress?.trim() ?? '';
+      String btcAddr = settings.btcAddress?.trim() ?? '';
+      final solAddr = settings.solanaAddress?.trim() ?? '';
+
+      // Авто-корекція, якщо користувач випадково переплутав поля адрес гаманців:
+      if (evmAddr.startsWith('1') || evmAddr.startsWith('3') || evmAddr.toLowerCase().startsWith('bc1')) {
+        if (btcAddr.isEmpty) {
+          btcAddr = evmAddr;
+          evmAddr = '';
+        }
+      } else if (btcAddr.toLowerCase().startsWith('0x')) {
+        if (evmAddr.isEmpty) {
+          evmAddr = btcAddr;
+          btcAddr = '';
+        }
+      }
+
       // 1. Паралельне завантаження даних бірж, блокчейнів, цін та DCA
       final spotFuture = binanceSvc.getSpotBalances();
       final futuresFuture = binanceSvc.getFuturesData();
       final earnFuture = binanceSvc.getSimpleEarnHoldings();
-      final solanaFuture = web3Svc.getSolanaAssets(settings.solanaAddress ?? '');
-      final evmFuture = web3Svc.getEvmAssets(settings.evmAddress ?? '');
+      final solanaFuture = web3Svc.getSolanaAssets(solAddr);
+      final evmFuture = web3Svc.getEvmAssets(evmAddr);
+      final btcFuture = web3Svc.getBtcAssets(btcAddr);
       final dcaTxsFuture = _repo.getDcaTransactions();
       final dcaSummaryFuture = _repo.getAggregatedDcaSummary();
       final pricesFuture = _pricing.getPricesAndChanges();
@@ -318,6 +515,7 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
         earnFuture,
         solanaFuture,
         evmFuture,
+        btcFuture,
         dcaTxsFuture,
         dcaSummaryFuture,
         pricesFuture,
@@ -328,9 +526,10 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       final earnItems = results[2] as List<BinanceEarnItem>;
       final solanaAssets = results[3] as List<Web3Asset>;
       final evmAssets = results[4] as List<Web3Asset>;
-      List<DcaTransaction> dcaTxs = results[5] as List<DcaTransaction>;
-      Map<String, DcaAggregatedSummary> dcaSummary = results[6] as Map<String, DcaAggregatedSummary>;
-      final priceMap = results[7] as Map<String, CryptoPriceData>;
+      final btcAssets = results[5] as List<Web3Asset>;
+      List<DcaTransaction> dcaTxs = results[6] as List<DcaTransaction>;
+      Map<String, DcaAggregatedSummary> dcaSummary = results[7] as Map<String, DcaAggregatedSummary>;
+      final priceMap = results[8] as Map<String, CryptoPriceData>;
 
       // Автоматична синхронізація угод Binance Spot + Convert (FIFO)
       if (binanceSvc.isConfigured && spotBalances.isNotEmpty) {
@@ -355,6 +554,37 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       final futuresPnl = futuresData['unrealizedPnlUsd'] as double? ?? 0.0;
       final futuresPositions = futuresData['positions'] as List<BinancePositionItem>? ?? [];
 
+      // Збагачуємо цінами Web3-активи (Solana, EVM, Bitcoin), якщо вони без ціни
+      final enrichedSolana = solanaAssets.map((a) {
+        if (a.priceUsd > 0 && a.totalUsd > 0) return a;
+        final p = priceMap[a.symbol.toUpperCase()]?.price ?? 0.0;
+        return a.copyWith(
+          priceUsd: p > 0 ? p : a.priceUsd,
+          totalUsd: p > 0 ? (a.amount * p) : a.totalUsd,
+        );
+      }).toList();
+
+      final enrichedEvm = evmAssets.map((a) {
+        if (a.priceUsd > 0 && a.totalUsd > 0) return a;
+        final sym = a.symbol.toUpperCase();
+        double p = priceMap[sym]?.price ?? 0.0;
+        if (p <= 0 && (sym == 'WBTC' || sym == 'BTCB' || sym == 'TBTC')) {
+          p = priceMap['BTC']?.price ?? 0.0;
+        }
+        return a.copyWith(
+          priceUsd: p > 0 ? p : a.priceUsd,
+          totalUsd: p > 0 ? (a.amount * p) : a.totalUsd,
+        );
+      }).toList();
+
+      final enrichedBtc = btcAssets.map((a) {
+        final p = priceMap['BTC']?.price ?? 0.0;
+        return a.copyWith(
+          priceUsd: p > 0 ? p : a.priceUsd,
+          totalUsd: p > 0 ? (a.amount * p) : a.totalUsd,
+        );
+      }).toList();
+
       // 2. Агрегація активів за символами
       final Map<String, double> aggregatedAmounts = {};
       final Map<String, List<String>> sourcesMap = {};
@@ -373,13 +603,18 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       spotBalances.forEach((sym, amt) => addAsset(sym, amt, 'Binance Spot'));
 
       // Додаємо із Solana
-      for (final a in solanaAssets) {
+      for (final a in enrichedSolana) {
         addAsset(a.symbol, a.amount, 'Solana');
       }
 
       // Додаємо із EVM
-      for (final a in evmAssets) {
+      for (final a in enrichedEvm) {
         addAsset(a.symbol, a.amount, 'EVM / MetaMask');
+      }
+
+      // Додаємо із Bitcoin
+      for (final a in enrichedBtc) {
+        addAsset(a.symbol, a.amount, 'Bitcoin On-chain');
       }
 
       // Додаємо із Earn
@@ -519,6 +754,11 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
         );
       } catch (_) {}
 
+      final initialLivePrices = Map<String, double>.from(state.livePrices);
+      for (final entry in priceMap.entries) {
+        initialLivePrices[entry.key.toUpperCase()] = entry.value.price;
+      }
+
       state = state.copyWith(
         isLoading: false,
         isLive: _wsService.isConnected,
@@ -528,15 +768,18 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
         binanceFuturesPnl: futuresPnl,
         binanceFuturesPositions: futuresPositions,
         binanceEarnItems: earnItems,
-        solanaAssets: solanaAssets,
-        evmAssets: evmAssets,
+        solanaAssets: enrichedSolana,
+        evmAssets: enrichedEvm,
+        btcAssets: enrichedBtc,
         dcaTransactions: dcaTxs,
+        livePrices: initialLivePrices,
         historicalDataset: historicalDataset,
         lastUpdated: DateTime.now(),
       );
 
       // Підключаємо / оновлюємо підписку на WebSocket стрім для монет портфеля
       _updateWsSubscriptions(normalizedHoldings);
+      CryptoAlertService().syncHoldingTargets(normalizedHoldings);
     } catch (e) {
       state = state.copyWith(
         isLoading: false,
@@ -568,19 +811,33 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
   }
 
   void _flushBufferedTicks() {
-    if (_bufferedTicks.isEmpty || state.overview.holdings.isEmpty) return;
+    if (_bufferedTicks.isEmpty) return;
 
     final ticks = Map<String, ({double price, double chg24h})>.from(_bufferedTicks);
     _bufferedTicks.clear();
 
+    final updatedLivePrices = Map<String, double>.from(state.livePrices);
+    for (final entry in ticks.entries) {
+      updatedLivePrices[entry.key.toUpperCase()] = entry.value.price;
+    }
+
     final currentHoldings = state.overview.holdings;
+    if (currentHoldings.isEmpty) {
+      state = state.copyWith(
+        livePrices: updatedLivePrices,
+        isLive: _wsService.isConnected,
+        lastUpdated: DateTime.now(),
+      );
+      return;
+    }
+
     final updatedHoldings = <HoldingItem>[];
     double totalPortfolioUsd = 0.0;
     double totalPortfolioPnlUsd = state.binanceFuturesPnl;
     bool anyChanged = false;
 
     for (final h in currentHoldings) {
-      final tick = ticks[h.symbol];
+      final tick = ticks[h.symbol] ?? ticks[h.symbol.toUpperCase()];
       if (tick != null) {
         anyChanged = true;
         final newPrice = tick.price;
@@ -589,66 +846,8 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
         final costUsd = h.amount * h.avgEntryPrice;
         final newPnlUsd = newTotalUsd - costUsd;
         final newPnlPct = costUsd > 0 ? ((newPnlUsd / costUsd) * 100) : 0.0;
-        final oldTpSl = h.tpSl;
-        final distTp1 = newPrice > 0 ? (((oldTpSl.tp1 - newPrice) / newPrice) * 100) : 0.0;
-        final distTp2 = newPrice > 0 ? (((oldTpSl.tp2 - newPrice) / newPrice) * 100) : 0.0;
-        final distTp3 = newPrice > 0 ? (((oldTpSl.tp3 - newPrice) / newPrice) * 100) : 0.0;
-        final distSl = newPrice > 0 ? (((newPrice - oldTpSl.stopLoss) / newPrice) * 100) : 0.0;
-        final distAcc = newPrice > 0 ? (((newPrice - oldTpSl.accumulatePrice) / newPrice) * 100) : 0.0;
-
-        String pos = oldTpSl.positionInChannel;
-        if (oldTpSl.bollingerUpper > 0 && oldTpSl.bollingerLower > 0) {
-          if (newPrice >= oldTpSl.bollingerUpper) {
-            pos = '🔥 Зона перекупленості (Вище верхнього Боллінджера)';
-          } else if (newPrice <= oldTpSl.bollingerLower) {
-            pos = '💎 Зона накопичення / Дно (Біля нижнього Боллінджера)';
-          } else if (newPrice > oldTpSl.bollingerMiddle) {
-            pos = '📈 Бичача зона (Вище середньої лінії SMA 20)';
-          } else {
-            pos = '📉 Ведмежа зона (Нижче середньої лінії SMA 20)';
-          }
-        }
-
-        final newTpSl = TpSlInfo(
-          entryPrice: oldTpSl.entryPrice,
-          tp1: oldTpSl.tp1,
-          tp1Pct: oldTpSl.tp1Pct,
-          distToTp1Pct: double.parse(distTp1.toStringAsFixed(1)),
-          tp1Label: oldTpSl.tp1Label,
-          tp2: oldTpSl.tp2,
-          tp2Pct: oldTpSl.tp2Pct,
-          distToTp2Pct: double.parse(distTp2.toStringAsFixed(1)),
-          tp2Label: oldTpSl.tp2Label,
-          tp3: oldTpSl.tp3,
-          tp3Pct: oldTpSl.tp3Pct,
-          distToTp3Pct: double.parse(distTp3.toStringAsFixed(1)),
-          tp3Label: oldTpSl.tp3Label,
-          stopLoss: oldTpSl.stopLoss,
-          distToSlPct: double.parse(distSl.toStringAsFixed(1)),
-          stopReason: oldTpSl.stopReason,
-          bollingerUpper: oldTpSl.bollingerUpper,
-          bollingerMiddle: oldTpSl.bollingerMiddle,
-          bollingerLower: oldTpSl.bollingerLower,
-          swingHigh: oldTpSl.swingHigh,
-          swingLow: oldTpSl.swingLow,
-          globalPeak100d: oldTpSl.globalPeak100d,
-          globalBottom100d: oldTpSl.globalBottom100d,
-          positionInChannel: pos,
-          accumulatePrice: oldTpSl.accumulatePrice,
-          distToAccumulatePct: double.parse(distAcc.toStringAsFixed(1)),
-          rsi: oldTpSl.rsi,
-          rsiStatus: oldTpSl.rsiStatus,
-          rsiDivergence: oldTpSl.rsiDivergence,
-          atr: oldTpSl.atr,
-          atrPct: oldTpSl.atrPct,
-          volumeRatio: oldTpSl.volumeRatio,
-          volumeStatus: oldTpSl.volumeStatus,
-          riskRewardRatio: oldTpSl.riskRewardRatio,
-          riskRewardGrade: oldTpSl.riskRewardGrade,
-          riskRewardLabel: oldTpSl.riskRewardLabel,
-          btcMarketRegime: oldTpSl.btcMarketRegime,
-          dcaLadder: oldTpSl.dcaLadder,
-        );
+        final newTpSl = _techService.recalculateWithLivePrice(h.tpSl, newPrice);
+        CryptoAlertService().checkLivePrice(h.symbol, newPrice);
 
         updatedHoldings.add(HoldingItem(
           symbol: h.symbol,
@@ -677,7 +876,15 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       }
     }
 
-    if (!anyChanged) return;
+    if (!anyChanged) {
+      // Навіть якщо holdings не змінилися, оновлюємо livePrices для DCA
+      state = state.copyWith(
+        livePrices: updatedLivePrices,
+        isLive: _wsService.isConnected,
+        lastUpdated: DateTime.now(),
+      );
+      return;
+    }
 
     totalPortfolioUsd += state.binanceFuturesMargin;
 
@@ -723,24 +930,29 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
 
     state = state.copyWith(
       overview: newOverview,
+      livePrices: updatedLivePrices,
       isLive: _wsService.isConnected,
       lastUpdated: DateTime.now(),
     );
   }
 
   void _updateWsSubscriptions(List<HoldingItem> holdings) {
-    final symbols = holdings.map((h) => h.symbol).toList();
+    final holdingSymbols = holdings.map((h) => h.symbol.toUpperCase());
+    final dcaSymbols = state.dcaTransactions.map((t) => t.symbol.toUpperCase());
+    final allSymbols = {...holdingSymbols, ...dcaSymbols}
+        .where((s) => s.isNotEmpty && !kStablecoins.contains(s))
+        .toList();
+
+    if (allSymbols.isEmpty) return;
     if (_wsService.isConnected) {
-      _wsService.updateSymbols(symbols);
+      _wsService.updateSymbols(allSymbols);
     } else {
-      _startWs(symbols);
+      _startWs(allSymbols);
     }
   }
 
   void startLiveStreaming() {
-    if (state.overview.holdings.isNotEmpty) {
-      _updateWsSubscriptions(state.overview.holdings);
-    }
+    _updateWsSubscriptions(state.overview.holdings);
   }
 
   void stopLiveStreaming() {
@@ -838,6 +1050,105 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
     }
   }
 
+  /// Синхронізація активів з Web3 некастодіальних гаманців (Bitcoin On-chain, MetaMask EVM, Solana) у DCA історію
+  Future<void> syncWeb3Dca() async {
+    state = state.copyWith(isLoading: true, errorMessage: null);
+    try {
+      final List<DcaTransaction> web3Tranches = [];
+      final now = DateTime.now();
+
+      // 1. Bitcoin On-chain
+      for (final btc in state.btcAssets) {
+        if (btc.amount > 0.000001) {
+          final p = btc.priceUsd > 0
+              ? btc.priceUsd
+              : (state.livePrices['BTC'] ??
+                  state.overview.holdings.where((h) => h.symbol == 'BTC').firstOrNull?.currentPrice ??
+                  0.0);
+          web3Tranches.add(DcaTransaction(
+            id: 'web3_btc_onchain',
+            symbol: 'BTC',
+            walletType: 'Web3 (Bitcoin On-chain)',
+            amount: btc.amount,
+            buyPrice: p,
+            fee: 0.0,
+            txDate: now,
+            notes: 'Синхронізовано з On-chain Bitcoin гаманця',
+          ));
+        }
+      }
+
+      // 2. EVM / MetaMask
+      for (final a in state.evmAssets) {
+        if (a.amount > 0.000001) {
+          final sym = a.symbol.toUpperCase();
+          double p = a.priceUsd > 0
+              ? a.priceUsd
+              : (state.livePrices[sym] ??
+                  state.overview.holdings.where((h) => h.symbol == sym).firstOrNull?.currentPrice ??
+                  0.0);
+          if (p <= 0 && (sym == 'WBTC' || sym == 'BTCB' || sym == 'TBTC' || sym == 'CBBTC' || sym == 'BTC')) {
+            p = state.livePrices['BTC'] ??
+                state.overview.holdings.where((h) => h.symbol == 'BTC').firstOrNull?.currentPrice ??
+                0.0;
+          } else if (p <= 0 && (sym == 'WETH' || sym == 'ETH')) {
+            p = state.livePrices['ETH'] ??
+                state.overview.holdings.where((h) => h.symbol == 'ETH').firstOrNull?.currentPrice ??
+                0.0;
+          }
+          web3Tranches.add(DcaTransaction(
+            id: 'web3_evm_${sym.toLowerCase()}',
+            symbol: sym,
+            walletType: 'Web3 (MetaMask / EVM)',
+            amount: a.amount,
+            buyPrice: p,
+            fee: 0.0,
+            txDate: now,
+            notes: 'Синхронізовано з MetaMask (EVM)',
+          ));
+        }
+      }
+
+      // 3. Solana
+      for (final a in state.solanaAssets) {
+        if (a.amount > 0.000001) {
+          final sym = a.symbol.toUpperCase();
+          final p = a.priceUsd > 0
+              ? a.priceUsd
+              : (state.livePrices[sym] ??
+                  state.overview.holdings.where((h) => h.symbol == sym).firstOrNull?.currentPrice ??
+                  0.0);
+          web3Tranches.add(DcaTransaction(
+            id: 'web3_sol_${sym.toLowerCase()}',
+            symbol: sym,
+            walletType: 'Web3 (Solana)',
+            amount: a.amount,
+            buyPrice: p,
+            fee: 0.0,
+            txDate: now,
+            notes: 'Синхронізовано з Solana гаманця',
+          ));
+        }
+      }
+
+      if (web3Tranches.isEmpty) {
+        state = state.copyWith(
+          isLoading: false,
+          errorMessage: 'На ваших Web3 гаманцях не виявлено активних балансів. Вкажіть адреси гаманців у Налаштуваннях.',
+        );
+        return;
+      }
+
+      await _repo.syncWeb3DcaTranches(web3Tranches);
+      await refreshPortfolio();
+    } catch (e) {
+      state = state.copyWith(
+        isLoading: false,
+        errorMessage: 'Помилка синхронізації Web3: $e',
+      );
+    }
+  }
+
   /// Запуск повного AI-сканування ринку (350+ спотових пар Binance)
   Future<void> scanMarketRadar() async {
     state = state.copyWith(
@@ -851,13 +1162,40 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
       final settings = await _ref.read(settingsRepositoryProvider).getSettings();
       final groq = GroqAiService(apiKey: settings.groqApiKey);
       final scanner = CryptoMarketScannerService(groqService: groq);
+      final journal = CryptoRadarJournalService();
 
       final portfolioVal = state.overview.totalNetWorthUsd > 0
           ? state.overview.totalNetWorthUsd
           : state.dcaTotals.totalValue;
 
+      // Монети, які вже в портфелі (Binance Spot + DCA-транзакції) — для ліміту ризику та попереджень
+      final heldAmounts = <String, double>{};
+      state.binanceSpot.forEach((sym, amt) {
+        heldAmounts[sym.toUpperCase()] = (heldAmounts[sym.toUpperCase()] ?? 0) + amt;
+      });
+      for (final tx in state.dcaTransactions) {
+        final s = tx.symbol.toUpperCase();
+        heldAmounts[s] = (heldAmounts[s] ?? 0) + tx.amount;
+      }
+      final heldUsd = <String, double>{};
+      heldAmounts.forEach((sym, amt) {
+        final price = state.livePrices[sym] ?? 0.0;
+        if (price > 0 && amt > 0 && sym != 'USDT' && sym != 'USDC') heldUsd[sym] = amt * price;
+      });
+
+      // Журнал: спершу перевіряємо раніше видані сигнали за реальними свічками,
+      // потім використовуємо фактичну статистику сетапів для калібрування оцінки
+      state = state.copyWith(
+        scanProgressStatus: 'Перевірка результатів минулих сигналів радара...',
+        scanProgress: 0.03,
+      );
+      await journal.evaluateOpenSignals();
+      final statsBefore = await journal.loadStats();
+
       final report = await scanner.scanMarket(
         portfolioValueUsd: portfolioVal,
+        heldValueUsd: heldUsd,
+        setupEdgeR: statsBefore.edgeBySetup,
         onProgress: (status, progress) {
           state = state.copyWith(
             scanProgressStatus: status,
@@ -866,17 +1204,75 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
         },
       );
 
+      var finalReport = report;
+      if (report.isError) {
+        state = state.copyWith(
+          isScanningMarket: false,
+          scanProgressStatus: null,
+          radarReport: report,
+          errorMessage: 'Сканування не завершено: перевірте інтернет або повторіть через хвилину.',
+        );
+        return;
+      }
+
+      // Записуємо нові сигнали в журнал і додаємо статистику до підсумку
+      await journal.recordSignals(report);
+      final statsAfter = await journal.loadStats();
+      finalReport = report.copyWith(
+        macroSummary: '${report.macroSummary}\n\n${statsAfter.toSummary()}',
+      );
+
       state = state.copyWith(
         isScanningMarket: false,
         scanProgressStatus: null,
         scanProgress: 1.0,
-        radarReport: report,
+        radarReport: finalReport,
       );
     } catch (e) {
       state = state.copyWith(
         isScanningMarket: false,
         scanProgressStatus: null,
         errorMessage: 'Помилка під час сканування ринку: $e',
+      );
+    }
+  }
+
+  /// Запуск інституційного аналізу фундаментальних криптовалют першого рівня (BTC, ETH, SOL, BNB, XRP, SUI, TON, AVAX, ADA, TRX)
+  Future<void> runFundamentalAnalysis() async {
+    if (state.isAnalyzingFundamentals) return;
+
+    state = state.copyWith(
+      isAnalyzingFundamentals: true,
+      fundamentalProgressStatus: 'Завантаження 365-денних свічок базових L1 монет...',
+      fundamentalProgress: 0.08,
+      errorMessage: null,
+    );
+
+    try {
+      final settings = await _ref.read(settingsRepositoryProvider).getSettings();
+      final groq = GroqAiService(apiKey: settings.groqApiKey);
+      final fundamentalSvc = CryptoFundamentalAnalysisService(groqService: groq);
+
+      final report = await fundamentalSvc.analyzeFundamentals(
+        onProgress: (status, progress) {
+          state = state.copyWith(
+            fundamentalProgressStatus: status,
+            fundamentalProgress: progress,
+          );
+        },
+      );
+
+      state = state.copyWith(
+        isAnalyzingFundamentals: false,
+        fundamentalProgressStatus: null,
+        fundamentalProgress: 1.0,
+        fundamentalReport: report,
+      );
+    } catch (e) {
+      state = state.copyWith(
+        isAnalyzingFundamentals: false,
+        fundamentalProgressStatus: null,
+        errorMessage: 'Помилка аналізу фундаментальних L1 монет: $e',
       );
     }
   }
@@ -888,3 +1284,4 @@ class CryptoPortfolioNotifier extends StateNotifier<CryptoPortfolioState> {
     super.dispose();
   }
 }
+

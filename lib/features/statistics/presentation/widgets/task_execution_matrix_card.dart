@@ -1,6 +1,7 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/models/models.dart';
 import '../../../tasks/presentation/screens/today_screen.dart' show taskRepositoryProvider;
@@ -78,26 +79,7 @@ class _TaskExecutionMatrixCardState
     }
   }
 
-  void _onPeriodChanged(MatrixPeriod newPeriod) {
-    setState(() {
-      _period = newPeriod;
-      _offset = 0;
-      _selectedBarIndex = null;
-    });
 
-    // Optionally update global period to keep screen cohesive
-    switch (newPeriod) {
-      case MatrixPeriod.week:
-        ref.read(statPeriodProvider.notifier).state = StatPeriod.week;
-        break;
-      case MatrixPeriod.month:
-        ref.read(statPeriodProvider.notifier).state = StatPeriod.month;
-        break;
-      case MatrixPeriod.year:
-        ref.read(statPeriodProvider.notifier).state = StatPeriod.year;
-        break;
-    }
-  }
 
   String _monthNameFull(int month) {
     const months = [
@@ -314,11 +296,11 @@ class _TaskExecutionMatrixCardState
   String _periodHeaderSubtitle() {
     switch (_period) {
       case MatrixPeriod.week:
-        return 'WEEK';
+        return 'ТИЖДЕНЬ';
       case MatrixPeriod.month:
-        return 'MONTH';
+        return 'МІСЯЦЬ';
       case MatrixPeriod.year:
-        return 'YEAR';
+        return 'РІК';
     }
   }
 
@@ -337,19 +319,19 @@ class _TaskExecutionMatrixCardState
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: const Color(0xFF0A101D),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF16253B), width: 1.5),
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withAlpha(90),
-            blurRadius: 18,
+            color: Colors.black.withAlpha(120),
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
         child: StreamBuilder<List<Task>>(
           stream: repo.getTasksForDateRange(range.start, range.end),
           builder: (context, snapshot) {
@@ -388,18 +370,17 @@ class _TaskExecutionMatrixCardState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // 1. Matrix Header (Cyberpunk Sci-Fi style matching screenshot)
+                  // 1. Matrix Header (Athletic Gym style matching reference)
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Expanded(
                         child: Text(
-                          'TASK EXECUTION MATRIX // ${_periodHeaderSubtitle()}',
-                          style: const TextStyle(
-                            color: Color(0xFF38BDF8),
-                            fontFamily: 'monospace',
+                          'МАТРИЦЯ ВИКОНАННЯ // ${_periodHeaderSubtitle()}',
+                          style: GoogleFonts.chakraPetch(
+                            color: Colors.white,
                             fontSize: 13,
-                            fontWeight: FontWeight.w800,
+                            fontWeight: FontWeight.w700,
                             letterSpacing: 1.1,
                           ),
                           maxLines: 1,
@@ -408,13 +389,12 @@ class _TaskExecutionMatrixCardState
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        'SUM: $totalCompleted',
-                        style: const TextStyle(
-                          color: Color(0xFFFFB300),
-                          fontFamily: 'monospace',
+                        'СУМА: $totalCompleted',
+                        style: GoogleFonts.chakraPetch(
+                          color: AppColors.accent,
                           fontSize: 14,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 1.0,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.8,
                         ),
                       ),
                     ],
@@ -422,27 +402,22 @@ class _TaskExecutionMatrixCardState
 
                   const SizedBox(height: 12),
 
-                  // 2. Period Switcher Buttons (Тиждень, Місяць, Рік)
-                  _buildPeriodPills(),
-
-                  const SizedBox(height: 12),
-
-                  // 3. Date Range Navigation Row (< 13-19 ЖОВТНЯ 2026 >)
+                  // 2. Date Range Navigation Row (< 13 – 19 ЖОВТНЯ 2026 >)
                   _buildDateNavigation(range.title),
 
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 10),
 
-                  // 4. Legend row (Виконано vs Не виконано vs Поточний)
+                  // 3. Legend row (Style 2: Iron & Steel - Wrapped to guarantee 0 overflow)
                   _buildLegend(),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
 
-                  // 5. Matrix Bar Chart
+                  // 4. Matrix Bar Chart (Flat rectangular solid gym pillars - 0 OVERFLOW)
                   _buildBarChart(bars, maxBarTasks, activeIndex),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 14),
 
-                  // 6. Selected Bar Info HUD
+                  // 5. Selected Bar Info HUD (3-column layout guaranteed 0 overflow)
                   if (activeBar != null) _buildDetailHud(activeBar, totalTasks),
                 ],
               ),
@@ -453,70 +428,17 @@ class _TaskExecutionMatrixCardState
     );
   }
 
-  Widget _buildPeriodPills() {
-    return Container(
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF1E293B)),
-      ),
-      child: Row(
-        children: [
-          _buildPillTab('ТИЖДЕНЬ', MatrixPeriod.week),
-          _buildPillTab('МІСЯЦЬ', MatrixPeriod.month),
-          _buildPillTab('РІК', MatrixPeriod.year),
-        ],
-      ),
-    );
-  }
 
-  Widget _buildPillTab(String label, MatrixPeriod period) {
-    final isSelected = _period == period;
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: () => _onPeriodChanged(period),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          padding: const EdgeInsets.symmetric(vertical: 7),
-          decoration: BoxDecoration(
-            color: isSelected ? const Color(0xFF0284C7) : Colors.transparent,
-            borderRadius: BorderRadius.circular(8),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: const Color(0xFF0284C7).withAlpha(90),
-                      blurRadius: 8,
-                      offset: const Offset(0, 2),
-                    ),
-                  ]
-                : null,
-          ),
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: isSelected ? Colors.white : const Color(0xFF94A3B8),
-              fontSize: 11,
-              fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
-              letterSpacing: 0.8,
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 
   Widget _buildDateNavigation(String title) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           IconButton(
             icon: const Icon(Icons.chevron_left_rounded,
-                color: Color(0xFF38BDF8), size: 24),
+                color: AppColors.accent, size: 24),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             onPressed: () {
@@ -534,11 +456,11 @@ class _TaskExecutionMatrixCardState
                   child: Text(
                     title,
                     textAlign: TextAlign.center,
-                    style: const TextStyle(
+                    style: GoogleFonts.chakraPetch(
                       color: AppColors.textPrimary,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
-                      letterSpacing: 0.6,
+                      letterSpacing: 0.7,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -555,17 +477,18 @@ class _TaskExecutionMatrixCardState
                       padding: const EdgeInsets.symmetric(
                           horizontal: 6, vertical: 2),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF38BDF8).withAlpha(40),
-                        borderRadius: BorderRadius.circular(6),
+                        color: AppColors.accent.withAlpha(35),
+                        borderRadius: BorderRadius.circular(4),
                         border: Border.all(
-                            color: const Color(0xFF38BDF8).withAlpha(120)),
+                            color: AppColors.accent.withAlpha(140), width: 1.2),
                       ),
-                      child: const Text(
-                        'Сьогодні',
-                        style: TextStyle(
-                          color: Color(0xFF38BDF8),
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
+                      child: Text(
+                        'СЬОГОДНІ',
+                        style: GoogleFonts.chakraPetch(
+                          color: AppColors.accent,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.5,
                         ),
                       ),
                     ),
@@ -576,7 +499,7 @@ class _TaskExecutionMatrixCardState
           ),
           IconButton(
             icon: const Icon(Icons.chevron_right_rounded,
-                color: Color(0xFF38BDF8), size: 24),
+                color: AppColors.accent, size: 24),
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             onPressed: () {
@@ -592,19 +515,19 @@ class _TaskExecutionMatrixCardState
   }
 
   Widget _buildLegend() {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 4,
       children: [
-        _buildLegendItem('Виконано', const Color(0xFF29B6F6)),
-        const SizedBox(width: 14),
-        _buildLegendItem('Не виконано', const Color(0xFFFF5252)),
-        const SizedBox(width: 14),
-        _buildLegendItem('Поточний', const Color(0xFFFF6D00)),
+        _buildLegendItem('Виконано', AppColors.accent),
+        _buildLegendItem('Залишилось', const Color(0xFF4A5263)),
+        _buildLegendItem('Активний', AppColors.accent, isOutline: true),
       ],
     );
   }
 
-  Widget _buildLegendItem(String text, Color color) {
+  Widget _buildLegendItem(String text, Color color, {bool isOutline = false}) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
@@ -612,17 +535,19 @@ class _TaskExecutionMatrixCardState
           width: 8,
           height: 8,
           decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(2),
+            color: isOutline ? Colors.transparent : color,
+            borderRadius: BorderRadius.circular(1),
+            border: isOutline ? Border.all(color: color, width: 1.5) : null,
           ),
         ),
         const SizedBox(width: 5),
         Text(
           text,
-          style: const TextStyle(
-            color: Color(0xFF94A3B8),
+          style: GoogleFonts.chakraPetch(
+            color: const Color(0xFF9DA4B0),
             fontSize: 10,
-            fontWeight: FontWeight.w500,
+            fontWeight: FontWeight.w600,
+            letterSpacing: 0.3,
           ),
         ),
       ],
@@ -635,15 +560,15 @@ class _TaskExecutionMatrixCardState
 
     return Container(
       height: chartHeight,
-      padding: const EdgeInsets.only(top: 8, bottom: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       decoration: BoxDecoration(
-        color: const Color(0xFF070B14),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF131D2E)),
+        color: const Color(0xFF0D0F14), // Deep cast-iron inner cavity
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.border, width: 1.2),
       ),
       child: Stack(
         children: [
-          // Background grid lines (subtle sci-fi guides)
+          // Background grid lines (Athletic guide lines)
           Positioned.fill(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -651,15 +576,15 @@ class _TaskExecutionMatrixCardState
                 3,
                 (_) => Container(
                   height: 1,
-                  color: const Color(0xFF132033).withAlpha(90),
+                  color: AppColors.border.withAlpha(70),
                 ),
               ),
             ),
           ),
 
-          // Bar Columns
+          // Bar Columns - 100% Guaranteed 0 Overflow
           Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: bars.asMap().entries.map((entry) {
               final index = entry.key;
               final bar = entry.value;
@@ -677,7 +602,6 @@ class _TaskExecutionMatrixCardState
                     bar: bar,
                     maxBarTasks: maxBarTasks,
                     isSelected: isSelected,
-                    availableHeight: chartHeight - 48,
                   ),
                 ),
               );
@@ -692,29 +616,19 @@ class _TaskExecutionMatrixCardState
     required MatrixBarData bar,
     required int maxBarTasks,
     required bool isSelected,
-    required double availableHeight,
   }) {
-    // Height factor based on total scheduled tasks
+    // Overall height factor based on scheduled tasks
     final double totalRatio =
-        maxBarTasks > 0 ? (bar.total / maxBarTasks).clamp(0.0, 1.0) : 0.0;
-    final double fullBarHeight =
-        (totalRatio * availableHeight).clamp(4.0, availableHeight);
+        maxBarTasks > 0 ? (bar.total / maxBarTasks).clamp(0.08, 1.0) : 0.08;
 
-    // Completed vs Uncompleted distribution
-    final double completedShare =
-        bar.total > 0 ? (bar.completed / bar.total) : 0.0;
-    final double completedHeight = fullBarHeight * completedShare;
-    final double uncompletedHeight = fullBarHeight - completedHeight;
+    final bool isHighlighted = isSelected || bar.isCurrent;
 
-    // Bar colors matching user image
-    final Color completedColor = bar.isCurrent
-        ? const Color(0xFFFF6D00) // Orange for current active day/week/month
-        : const Color(0xFF29B6F6); // Vibrant Blue for other completed tasks
+    // Pillar width
+    final double pillarWidth = _period == MatrixPeriod.year
+        ? 16.0
+        : (_period == MatrixPeriod.month ? 36.0 : 32.0);
 
-    const Color uncompletedColor =
-        Color(0xFFFF5252); // Coral Red for uncompleted tasks
-
-    // Value display on top of bar
+    // Value display on top of bar (e.g. 14/16, 4/16, 0/16)
     String topLabel = '${bar.completed}';
     if (bar.uncompleted > 0) {
       topLabel = '${bar.completed}/${bar.total}';
@@ -723,79 +637,90 @@ class _TaskExecutionMatrixCardState
     return Column(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [
-        // Top value label (e.g. 4 or 4/5)
-        AnimatedOpacity(
-          duration: const Duration(milliseconds: 200),
-          opacity: bar.total > 0 ? 1.0 : 0.35,
-          child: Text(
-            bar.total > 0 ? topLabel : '0',
-            style: TextStyle(
-              color: isSelected
-                  ? const Color(0xFFFFB300)
-                  : (bar.isCurrent
-                      ? const Color(0xFFFF9100)
-                      : (bar.total > 0
-                          ? Colors.white
-                          : const Color(0xFF64748B))),
-              fontSize: _period == MatrixPeriod.year ? 9 : 11,
-              fontWeight:
-                  isSelected || bar.isCurrent ? FontWeight.w900 : FontWeight.w700,
-              fontFamily: 'monospace',
+        // Top value label
+        SizedBox(
+          height: 18,
+          child: Center(
+            child: AnimatedOpacity(
+              duration: const Duration(milliseconds: 200),
+              opacity: bar.total > 0 ? 1.0 : 0.4,
+              child: Text(
+                bar.total > 0 ? topLabel : '0',
+                style: GoogleFonts.chakraPetch(
+                  color: isHighlighted
+                      ? AppColors.accent
+                      : (bar.completed > 0 ? Colors.white : const Color(0xFF64748B)),
+                  fontSize: _period == MatrixPeriod.year ? 9 : 11,
+                  fontWeight: isHighlighted ? FontWeight.w900 : FontWeight.w700,
+                  letterSpacing: 0.3,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.clip,
+              ),
             ),
-            maxLines: 1,
-            overflow: TextOverflow.clip,
           ),
         ),
 
-        const SizedBox(height: 5),
+        const SizedBox(height: 4),
 
-        // The Bar Graphic
-        Container(
-          width: _period == MatrixPeriod.year
-              ? 16
-              : (_period == MatrixPeriod.month ? 38 : 30),
-          height: bar.total > 0 ? fullBarHeight : 4,
-          decoration: BoxDecoration(
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
-            boxShadow: isSelected
-                ? [
-                    BoxShadow(
-                      color: (bar.isCurrent ? completedColor : const Color(0xFF38BDF8))
-                          .withAlpha(120),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
-          ),
-          child: ClipRRect(
-            borderRadius:
-                const BorderRadius.vertical(top: Radius.circular(4)),
-            child: bar.total == 0
-                ? Container(
-                    color: const Color(0xFF1E293B),
-                  )
-                : Column(
+        // The Flat Rectangular Solid Gym Pillar (Fills yellow proportionally to completed tasks!)
+        Expanded(
+          child: Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionallySizedBox(
+              heightFactor: bar.total > 0 ? totalRatio.clamp(0.08, 1.0) : 0.05,
+              widthFactor: null,
+              child: Container(
+                width: pillarWidth,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF262A36), // Deep steel background
+                  borderRadius: BorderRadius.circular(2),
+                  border: Border.all(
+                    color: isHighlighted ? AppColors.accent : const Color(0xFF383E4E),
+                    width: isHighlighted ? 1.8 : 1.0,
+                  ),
+                  boxShadow: isHighlighted
+                      ? [
+                          BoxShadow(
+                            color: AppColors.accent.withAlpha(90),
+                            blurRadius: 8,
+                            spreadRadius: 0,
+                          ),
+                        ]
+                      : null,
+                ),
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(1),
+                  child: Column(
                     children: [
-                      // Top segment: Uncompleted tasks
-                      if (bar.uncompleted > 0)
-                        AnimatedContainer(
-                          duration: const Duration(milliseconds: 300),
-                          curve: Curves.easeOutCubic,
-                          height: uncompletedHeight,
-                          color: uncompletedColor,
+                      // Top segment: uncompleted tasks (Steel gray)
+                      if (bar.total > 0 && bar.uncompleted > 0)
+                        Expanded(
+                          flex: bar.uncompleted,
+                          child: Container(
+                            color: const Color(0xFF4A5263),
+                          ),
                         ),
-                      // Bottom segment: Completed tasks
+                      // Bottom segment: completed tasks (Solid Neon Lime / Yellow #D4FF00!)
                       if (bar.completed > 0)
                         Expanded(
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeOutCubic,
-                            color: completedColor,
+                          flex: bar.completed,
+                          child: Container(
+                            color: AppColors.accent,
+                          ),
+                        ),
+                      // If bar.total == 0
+                      if (bar.total == 0)
+                        Expanded(
+                          child: Container(
+                            color: const Color(0xFF1E212B),
                           ),
                         ),
                     ],
                   ),
+                ),
+              ),
+            ),
           ),
         ),
 
@@ -804,13 +729,13 @@ class _TaskExecutionMatrixCardState
         // Bottom Label (ПН, ВТ... or Т1, Т2... or СІЧ, ЛЮТ...)
         Text(
           bar.label,
-          style: TextStyle(
-            color: bar.isCurrent
-                ? const Color(0xFFFF851B)
-                : (isSelected ? Colors.white : const Color(0xFF94A3B8)),
+          style: GoogleFonts.chakraPetch(
+            color: isHighlighted
+                ? AppColors.accent
+                : (isSelected ? Colors.white : const Color(0xFF9DA4B0)),
             fontSize: _period == MatrixPeriod.year ? 9 : 11,
-            fontWeight:
-                bar.isCurrent || isSelected ? FontWeight.w800 : FontWeight.w600,
+            fontWeight: isHighlighted ? FontWeight.w900 : FontWeight.w600,
+            letterSpacing: 0.4,
           ),
         ),
 
@@ -818,9 +743,9 @@ class _TaskExecutionMatrixCardState
         if (bar.subLabel != null)
           Text(
             bar.subLabel!,
-            style: TextStyle(
-              color: bar.isCurrent
-                  ? const Color(0xFFFF851B).withAlpha(180)
+            style: GoogleFonts.chakraPetch(
+              color: isHighlighted
+                  ? AppColors.accent.withAlpha(200)
                   : const Color(0xFF64748B),
               fontSize: 8,
               fontWeight: FontWeight.w500,
@@ -833,15 +758,17 @@ class _TaskExecutionMatrixCardState
   }
 
   Widget _buildDetailHud(MatrixBarData bar, int overallTotal) {
+    final bool isHighlighted = bar.isCurrent || (_selectedBarIndex != null && _selectedBarIndex != -1);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(12),
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
         border: Border.all(
-          color: bar.isCurrent
-              ? const Color(0xFFFF6D00).withAlpha(120)
-              : const Color(0xFF0284C7).withAlpha(100),
+          color: isHighlighted
+              ? AppColors.accent.withAlpha(160)
+              : AppColors.border,
+          width: 1.2,
         ),
       ),
       child: Column(
@@ -850,70 +777,82 @@ class _TaskExecutionMatrixCardState
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.event_note_rounded,
-                    size: 15,
-                    color: bar.isCurrent
-                        ? const Color(0xFFFF851B)
-                        : const Color(0xFF38BDF8),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    bar.fullLabel,
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 12,
+              Expanded(
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.calendar_today_rounded,
+                      size: 13,
+                      color: bar.isCurrent ? AppColors.accent : const Color(0xFF9DA4B0),
                     ),
-                  ),
-                ],
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        bar.fullLabel.toUpperCase(),
+                        style: GoogleFonts.chakraPetch(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w700,
+                          fontSize: 11,
+                          letterSpacing: 0.5,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
               if (bar.isCurrent)
                 Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFFF6D00).withAlpha(40),
+                    color: AppColors.accent.withAlpha(35),
                     borderRadius: BorderRadius.circular(4),
                     border: Border.all(
-                        color: const Color(0xFFFF6D00).withAlpha(140)),
+                        color: AppColors.accent.withAlpha(140), width: 1.0),
                   ),
-                  child: const Text(
-                    'Поточний',
-                    style: TextStyle(
-                      color: Color(0xFFFF851B),
+                  child: Text(
+                    'СЬОГОДНІ',
+                    style: GoogleFonts.chakraPetch(
+                      color: AppColors.accent,
                       fontSize: 9,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.5,
                     ),
                   ),
                 ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              _buildHudStat(
-                label: 'Виконано',
-                value: '${bar.completed}',
-                color: const Color(0xFF29B6F6),
-                icon: Icons.check_circle_outline_rounded,
+              Expanded(
+                child: _buildHudStat(
+                  label: 'ВИКОНАНО',
+                  value: '${bar.completed}',
+                  color: AppColors.accent,
+                  icon: Icons.check_circle_rounded,
+                ),
               ),
-              _buildHudStat(
-                label: 'Не виконано',
-                value: '${bar.uncompleted}',
-                color: const Color(0xFFFF5252),
-                icon: Icons.cancel_outlined,
+              Expanded(
+                child: _buildHudStat(
+                  label: 'ЗАЛИШИЛОСЬ',
+                  value: '${bar.uncompleted}',
+                  color: const Color(0xFF9DA4B0),
+                  icon: Icons.radio_button_unchecked_rounded,
+                ),
               ),
-              _buildHudStat(
-                label: 'Успішність',
-                value: bar.total > 0
-                    ? '${bar.completionRate.toStringAsFixed(0)}%'
-                    : '—',
-                color: const Color(0xFFFFB300),
-                icon: Icons.percent_rounded,
+              Expanded(
+                child: _buildHudStat(
+                  label: 'РЕЗУЛЬТАТ',
+                  value: bar.total > 0
+                      ? '${bar.completionRate.toStringAsFixed(0)}%'
+                      : '0%',
+                  color: bar.completionRate >= 100
+                      ? AppColors.accent
+                      : Colors.white,
+                  icon: Icons.speed_rounded,
+                ),
               ),
             ],
           ),
@@ -928,25 +867,37 @@ class _TaskExecutionMatrixCardState
     required Color color,
     required IconData icon,
   }) {
-    return Row(
+    return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(icon, color: color, size: 14),
-        const SizedBox(width: 4),
-        Text(
-          '$label: ',
-          style: const TextStyle(
-            color: Color(0xFF94A3B8),
-            fontSize: 11,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, color: color, size: 12),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                style: GoogleFonts.chakraPetch(
+                  color: const Color(0xFF9DA4B0),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.4,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
+        const SizedBox(height: 3),
         Text(
           value,
-          style: TextStyle(
+          style: GoogleFonts.chakraPetch(
             color: color,
-            fontSize: 12,
-            fontWeight: FontWeight.bold,
-            fontFamily: 'monospace',
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
           ),
         ),
       ],

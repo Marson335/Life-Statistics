@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
+import 'package:google_fonts/google_fonts.dart';
 import '../../../../shared/models/models.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/utils/date_utils.dart' as app_date;
@@ -7,12 +9,18 @@ import '../../../../core/services/notification_service.dart';
 import '../../data/task_repository.dart';
 import '../../data/notification_expense_service.dart';
 import '../../../settings/data/settings_repository.dart';
+import '../../../targets/presentation/screens/targets_screen.dart'
+    show targetsStreamProvider;
 
-// Provider for selected date
-final selectedDateProvider = StateProvider<DateTime>((ref) => DateTime.now());
+// Provider for selected date (always normalized to midnight local time)
+final selectedDateProvider = StateProvider<DateTime>((ref) {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day);
+});
 
-// Provider for tasks on selected date
-final tasksForDateProvider = StreamProvider.family<List<Task>, DateTime>((ref, date) {
+// Provider for tasks on selected date (always normalized)
+final tasksForDateProvider = StreamProvider.family<List<Task>, DateTime>((ref, rawDate) {
+  final date = DateTime(rawDate.year, rawDate.month, rawDate.day);
   final repo = ref.watch(taskRepositoryProvider);
   return repo.getTasksForDate(date);
 });
@@ -33,13 +41,39 @@ class TodayScreen extends ConsumerStatefulWidget {
   ConsumerState<TodayScreen> createState() => _TodayScreenState();
 }
 
-class _TodayScreenState extends ConsumerState<TodayScreen> {
+class _TodayScreenState extends ConsumerState<TodayScreen> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      NotificationExpenseService().startListening(ref.read(taskRepositoryProvider));
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      ref.read(selectedDateProvider.notifier).state = today;
+      final repo = ref.read(taskRepositoryProvider);
+      NotificationExpenseService().startListening(repo);
+      repo.processMissedTaskPenalties();
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      final now = DateTime.now();
+      final today = DateTime(now.year, now.month, now.day);
+      final currentSelected = ref.read(selectedDateProvider);
+      // Auto rollover to today if date changed while app was in background
+      if (currentSelected.isBefore(today)) {
+        ref.read(selectedDateProvider.notifier).state = today;
+      }
+      ref.read(taskRepositoryProvider).processMissedTaskPenalties();
+    }
   }
   @override
   Widget build(BuildContext context) {
@@ -55,22 +89,33 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Привіт!',
-              style: TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 14,
+              'NO EXCUSES // ${app_date.DateUtils.formatDate(selectedDate).toUpperCase()}',
+              style: GoogleFonts.chakraPetch(
+                color: AppColors.accent,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
               ),
             ),
-            const Text(
-              'Твої задачі',
-              style: TextStyle(
-                color: AppColors.textPrimary,
+            Text(
+              'HARD WORK GRIND',
+              style: GoogleFonts.chakraPetch(
+                color: Colors.white,
                 fontSize: 22,
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 0.8,
               ),
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            onPressed: () => context.go('/settings'),
+            tooltip: 'Налаштування',
+            icon: const Icon(Icons.settings_rounded, color: AppColors.textSecondary),
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: SafeArea(
         child: Column(
@@ -94,11 +139,13 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddTaskBottomSheet(context),
         backgroundColor: AppColors.accent,
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Задача'),
+        foregroundColor: Colors.black,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        elevation: 6,
+        child: const Icon(Icons.add_rounded, size: 36, color: Colors.black),
       ),
     );
   }
@@ -106,7 +153,7 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   Widget _buildHeader(BuildContext context, DateTime date) {
     final isToday = app_date.DateUtils.isToday(date);
     return Padding(
-      padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+      padding: const EdgeInsets.fromLTRB(20, 12, 20, 6),
       child: Row(
         children: [
           Expanded(
@@ -114,18 +161,21 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  isToday ? 'Сьогодні' : app_date.DateUtils.formatDate(date),
-                  style: const TextStyle(
+                  isToday ? 'СЬОГОДНІ' : app_date.DateUtils.formatDate(date).toUpperCase(),
+                  style: GoogleFonts.chakraPetch(
                     color: AppColors.textPrimary,
-                    fontSize: 26,
-                    fontWeight: FontWeight.bold,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
                   ),
                 ),
                 Text(
-                  app_date.DateUtils.formatDayOfWeek(date),
-                  style: const TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 14,
+                  app_date.DateUtils.formatDayOfWeek(date).toUpperCase(),
+                  style: GoogleFonts.chakraPetch(
+                    color: AppColors.accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.6,
                   ),
                 ),
               ],
@@ -134,14 +184,18 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
           IconButton(
             onPressed: () => _pickDate(context, date),
             icon: const Icon(Icons.calendar_month_rounded),
-            color: AppColors.textSecondary,
+            color: AppColors.accent,
           ),
           if (!isToday)
             TextButton(
-              onPressed: () =>
-                  ref.read(selectedDateProvider.notifier).state = DateTime.now(),
-              child: const Text('Сьогодні',
-                  style: TextStyle(color: AppColors.accent)),
+              onPressed: () {
+                final now = DateTime.now();
+                ref.read(selectedDateProvider.notifier).state = DateTime(now.year, now.month, now.day);
+              },
+              child: Text(
+                'СЬОГОДНІ',
+                style: GoogleFonts.chakraPetch(color: AppColors.accent, fontWeight: FontWeight.w800),
+              ),
             ),
         ],
       ),
@@ -201,33 +255,33 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
         ],
         if (greenTasks.isNotEmpty) ...[
           _buildSectionHeader(
-              'Повторювані', AppColors.greenTask, Icons.repeat_rounded),
+              'DAILY DRILLS // РЕЖИМ', AppColors.accent, Icons.repeat_rounded),
           ...greenTasks.map((t) => _TaskCard(task: t)),
           const SizedBox(height: 12),
         ],
         if (blueTasks.isNotEmpty) ...[
           _buildSectionHeader(
-              'Заплановані', AppColors.blueTask, Icons.event_note_rounded),
+              'TARGETS // ФОКУС', Colors.white, Icons.flag_rounded),
           ...blueTasks.map((t) => _TaskCard(task: t)),
           const SizedBox(height: 12),
         ],
         if (redTasks.isNotEmpty) ...[
           _buildSectionHeader(
-              'Невдачі', AppColors.redTask, Icons.warning_amber_rounded),
+              'PENALTY ZONE // СЛАБКІСТЬ', AppColors.redTask, Icons.warning_rounded),
           ...redTasks.map((t) => _TaskCard(task: t)),
           const SizedBox(height: 12),
         ],
         if (yellowTasks.isNotEmpty) ...[
           _buildSectionHeader(
-              'Успіхи', AppColors.yellowTask, Icons.star_rounded),
+              'VICTORIES // РЕЗУЛЬТАТ', AppColors.accent, Icons.star_rounded),
           ...yellowTasks.map((t) => _TaskCard(task: t)),
         ],
-          if (financeTasks.isNotEmpty) ...[
-            _buildSectionHeader(
-                'Фінанси', AppColors.accent, Icons.account_balance_wallet_rounded),
-            ...financeTasks.map((t) => _TaskCard(task: t)),
-            const SizedBox(height: 12),
-          ],
+        if (financeTasks.isNotEmpty) ...[
+          _buildSectionHeader(
+              'CAPITAL // ВИТРАТИ ТА ДОХОДИ', AppColors.accent, Icons.account_balance_wallet_rounded),
+          ...financeTasks.map((t) => _TaskCard(task: t)),
+          const SizedBox(height: 12),
+        ],
         const SizedBox(height: 80),
       ],
     );
@@ -236,65 +290,81 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
   Widget _buildProgressCard(int completed, int total, double progress) {
     final percent = (progress * 100).round();
     return Container(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 56,
-            height: 56,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                CircularProgressIndicator(
-                  value: progress,
-                  backgroundColor: AppColors.surfaceVariant,
-                  valueColor: AlwaysStoppedAnimation<Color>(
-                    progress >= 1.0
-                        ? AppColors.greenTask
-                        : AppColors.accent,
-                  ),
-                  strokeWidth: 5,
-                ),
-                Text(
-                  '$percent%',
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.accent.withAlpha(180), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(90),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
-          const SizedBox(width: 16),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(
-                '$completed з $total виконано',
-                style: const TextStyle(
-                  color: AppColors.textPrimary,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w600,
+              Expanded(
+                child: Text(
+                  'WORK CAPACITY // DAILY OUTPUT',
+                  overflow: TextOverflow.ellipsis,
+                  maxLines: 1,
+                  style: GoogleFonts.chakraPetch(
+                    color: AppColors.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.6,
+                  ),
                 ),
               ),
+              const SizedBox(width: 8),
               Text(
-                progress >= 1.0
-                    ? '🎉 Відмінна робота!'
-                    : 'Залишилось ${total - completed} задач',
-                style: TextStyle(
-                  color: progress >= 1.0
-                      ? AppColors.greenTask
-                      : AppColors.textSecondary,
-                  fontSize: 13,
+                '$percent% MAX',
+                style: GoogleFonts.chakraPetch(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  letterSpacing: 0.5,
                 ),
               ),
             ],
+          ),
+          const SizedBox(height: 10),
+          Container(
+            height: 14,
+            width: double.infinity,
+            decoration: BoxDecoration(
+              color: const Color(0xFF0C0D10),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: FractionallySizedBox(
+              alignment: Alignment.centerLeft,
+              widthFactor: progress.clamp(0.0, 1.0),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppColors.accent,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$completed / $total СЕТІВ ЗАКРИТО  •  ${progress >= 1.0 ? "РЕКОРД ДОСЯГНУТО! 🔥" : "ТРИМАЙ ТЕМП!"}',
+            overflow: TextOverflow.ellipsis,
+            maxLines: 1,
+            style: GoogleFonts.chakraPetch(
+              color: const Color(0xFFC8CDDC),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.5,
+            ),
           ),
         ],
       ),
@@ -303,19 +373,44 @@ class _TodayScreenState extends ConsumerState<TodayScreen> {
 
   Widget _buildSectionHeader(String title, Color color, IconData icon) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 10, top: 4),
       child: Row(
         children: [
-          Icon(icon, color: color, size: 16),
-          const SizedBox(width: 6),
-          Text(
-            title,
-            style: TextStyle(
-              color: color,
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.5,
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: AppColors.surfaceVariant,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppColors.border, width: 1.2),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(icon, color: color, size: 14),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      title.toUpperCase(),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: GoogleFonts.chakraPetch(
+                        color: color,
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: 0.8,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            width: 24,
+            height: 1,
+            color: AppColors.border,
           ),
         ],
       ),
@@ -380,147 +475,153 @@ class _TaskCard extends ConsumerWidget {
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: isUncategorizedFinance ? highlightColor.withAlpha(120) : AppColors.border,
-          width: isUncategorizedFinance ? 1.5 : 1.0,
+          color: isUncategorizedFinance ? highlightColor.withAlpha(160) : AppColors.border,
+          width: 1.5,
         ),
-        boxShadow: [
-          BoxShadow(
-            color: color.withAlpha(20),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          ListTile(
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            leading: task.hasCheckbox
-                ? GestureDetector(
-                    onTap: isToday ? () => repo.toggleTaskCompletion(task.id, !task.isCompleted) : null,
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 200),
-                      width: 24,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color: task.isCompleted
-                            ? color
-                            : Colors.transparent,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: task.isCompleted
-                              ? color
-                              : AppColors.textSecondary,
-                          width: 1.5,
-                        ),
-                      ),
-                      child: task.isCompleted
-                          ? const Icon(Icons.check_rounded,
-                              color: Colors.white, size: 16)
-                          : null,
-                    ),
-                  )
-                : Container(
-                    width: 10,
-                    height: 10,
-                    decoration:
-                        BoxDecoration(color: color, shape: BoxShape.circle),
-                  ),
-            title: Text(
-              task.title,
-              style: TextStyle(
-                color: task.isCompleted
-                    ? AppColors.textSecondary
-                    : AppColors.textPrimary,
-                fontSize: 15,
-                decoration:
-                    task.isCompleted ? TextDecoration.lineThrough : null,
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(9),
+        child: Stack(
+          children: [
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 4,
+              child: ColoredBox(
+                color: task.isCompleted ? AppColors.accent : color,
               ),
             ),
-            subtitle: _buildSubtitle(task),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (task.type == TaskType.green && task.groupId != null)
-                  StreakBadge(groupId: task.groupId!, date: task.date),
-                Container(
-                  width: 4,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: color,
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
-              ],
-            ),
-            onLongPress: isPast ? null : () => _showTaskOptions(context, ref, task),
-          ),
-          if (isUncategorizedFinance)
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              padding: const EdgeInsets.only(left: 4),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Divider(color: AppColors.border, height: 1),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      Icon(Icons.category_rounded, size: 14, color: highlightColor),
-                      const SizedBox(width: 4),
-                      Text(
-                        isIncomeTask ? 'Оберіть категорію доходу:' : 'Оберіть категорію витрати:',
-                        style: TextStyle(
-                          color: highlightColor,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
+                  ListTile(
+                    contentPadding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+                    leading: task.hasCheckbox
+                        ? GestureDetector(
+                            onTap: isToday ? () => repo.toggleTaskCompletion(task.id, !task.isCompleted) : null,
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 200),
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: task.isCompleted
+                                    ? AppColors.accent
+                                    : Colors.transparent,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: task.isCompleted
+                                      ? AppColors.accent
+                                      : AppColors.accent.withAlpha(200),
+                                  width: 1.8,
+                                ),
+                              ),
+                              child: task.isCompleted
+                                  ? const Icon(Icons.check_rounded,
+                                      color: Colors.black, size: 16)
+                                  : null,
+                            ),
+                          )
+                        : Container(
+                            width: 8,
+                            height: 8,
+                            decoration:
+                                BoxDecoration(color: color, borderRadius: BorderRadius.circular(2)),
+                          ),
+                    title: Text(
+                      task.title,
+                      style: GoogleFonts.chakraPetch(
+                        color: task.isCompleted
+                            ? AppColors.textSecondary
+                            : AppColors.textPrimary,
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                        decoration:
+                            task.isCompleted ? TextDecoration.lineThrough : null,
                       ),
-                    ],
+                    ),
+                    subtitle: _buildSubtitle(task, ref),
+                    trailing: (task.type == TaskType.green && task.groupId != null)
+                        ? StreakBadge(groupId: task.groupId!, date: task.date)
+                        : null,
+                    onLongPress: isPast ? null : () => _showTaskOptions(context, ref, task),
                   ),
-                  const SizedBox(height: 8),
-                  Consumer(
-                    builder: (context, ref, child) {
-                      final settings = ref.watch(settingsProvider).valueOrNull;
-                      final tags = isIncomeTask
-                          ? (settings?.incomeTags ?? ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'])
-                          : (settings?.expenseTags ?? ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше']);
-                      return Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: tags.map((t) {
-                          return ActionChip(
-                            label: Text(
-                              t,
-                              style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
-                            ),
-                            backgroundColor: AppColors.surfaceVariant,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              side: const BorderSide(color: AppColors.border),
-                            ),
-                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                            onPressed: () {
-                              final updated = task.copyWith(tag: t);
-                              repo.updateTask(updated);
+                  if (isUncategorizedFinance)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Divider(color: AppColors.border, height: 1),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Icon(Icons.category_rounded, size: 14, color: highlightColor),
+                              const SizedBox(width: 4),
+                              Expanded(
+                                child: Text(
+                                  isIncomeTask ? 'Оберіть категорію доходу:' : 'Оберіть категорію витрати:',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    color: highlightColor,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          Consumer(
+                            builder: (context, ref, child) {
+                              final settings = ref.watch(settingsProvider).valueOrNull;
+                              final tags = isIncomeTask
+                                  ? (settings?.incomeTags ?? ['Зарплата', 'Подарунок', 'Кешбек', 'Інше'])
+                                  : (settings?.expenseTags ?? ['Їжа', 'Транспорт', 'Розваги', 'Житло', 'Інше']);
+                              return Wrap(
+                                spacing: 6,
+                                runSpacing: 6,
+                                children: tags.map((t) {
+                                  return ActionChip(
+                                    label: Text(
+                                      t,
+                                      style: const TextStyle(fontSize: 11, color: AppColors.textPrimary),
+                                    ),
+                                    backgroundColor: AppColors.surfaceVariant,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      side: const BorderSide(color: AppColors.border),
+                                    ),
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                                    onPressed: () {
+                                      final updated = task.copyWith(tag: t);
+                                      repo.updateTask(updated);
+                                    },
+                                  );
+                                }).toList(),
+                              );
                             },
-                          );
-                        }).toList(),
-                      );
-                    },
-                  ),
+                          ),
+                        ],
+                      ),
+                    ),
                 ],
               ),
             ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget? _buildSubtitle(Task task) {
+  Widget? _buildSubtitle(Task task, WidgetRef ref) {
     final parts = <String>[];
     if (task.timeSpentMinutes != null && task.timeSpentMinutes! > 0) {
       parts.add(
@@ -537,11 +638,84 @@ class _TaskCard extends ConsumerWidget {
     } else if (task.type == TaskType.finance) {
       parts.add('⚠️ Без категорії');
     }
-    if (parts.isEmpty) return null;
-    return Text(
-      parts.join('  '),
-      style:
-          const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+
+    final hasTargets =
+        task.targetPoints.isNotEmpty || task.appliedTargetPoints.isNotEmpty;
+    if (parts.isEmpty && !hasTargets) return null;
+
+    final targetsList = ref.watch(targetsStreamProvider).valueOrNull ?? const [];
+    final targetMap = {for (final t in targetsList) t.id: t};
+
+    final targetChips = <Widget>[];
+    if (hasTargets) {
+      final allTargetIds = <String>{
+        ...task.targetPoints.keys,
+        ...task.appliedTargetPoints.keys,
+      };
+      for (final tId in allTargetIds) {
+        final target = targetMap[tId];
+        final targetName = target?.title ?? 'Таргет';
+        final applied = task.appliedTargetPoints[tId];
+        final basePts = task.targetPoints[tId] ?? 0;
+
+        String ptsLabel;
+        Color badgeColor;
+        if (applied != null && applied != 0) {
+          if (applied > 0) {
+            ptsLabel = '+$applied TP';
+            badgeColor = AppColors.greenTask;
+          } else {
+            ptsLabel = '$applied TP';
+            badgeColor = AppColors.redTask;
+          }
+        } else {
+          ptsLabel = '+$basePts TP';
+          badgeColor = AppColors.accent;
+        }
+
+        targetChips.add(
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: badgeColor.withAlpha(25),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: badgeColor.withAlpha(110), width: 0.8),
+            ),
+            child: Text(
+              '🎯 $targetName: $ptsLabel',
+              style: GoogleFonts.chakraPetch(
+                color: badgeColor,
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (parts.isNotEmpty)
+          Text(
+            parts.join('  '),
+            style: GoogleFonts.chakraPetch(
+              color: AppColors.textSecondary,
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              letterSpacing: 0.3,
+            ),
+          ),
+        if (targetChips.isNotEmpty) ...[
+          if (parts.isNotEmpty) const SizedBox(height: 4),
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            children: targetChips,
+          ),
+        ],
+      ],
     );
   }
 
@@ -575,21 +749,45 @@ class _TaskCard extends ConsumerWidget {
                 );
               },
             ),
-            ListTile(
-              leading: const Icon(Icons.delete_rounded,
-                  color: AppColors.redTask),
-              title: const Text('Видалити',
-                  style: TextStyle(color: AppColors.redTask)),
-              onTap: () async {
-                Navigator.pop(ctx);
-                final repo = ref.read(taskRepositoryProvider);
-                if (task.type == TaskType.green && task.groupId != null) {
-                  await repo.deleteAllGreenTaskInstances(task.groupId!, task.date);
-                } else {
+            if (task.type == TaskType.green && task.groupId != null) ...[
+              ListTile(
+                leading: const Icon(Icons.delete_sweep_rounded,
+                    color: AppColors.redTask),
+                title: const Text('Видалити цю та майбутні',
+                    style: TextStyle(color: AppColors.redTask)),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final repo = ref.read(taskRepositoryProvider);
                   await repo.deleteTask(task.id);
-                }
-              },
-            ),
+                  await repo.deleteAllGreenTaskInstances(task.groupId!, task.date, currentTaskId: task.id);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_forever_rounded,
+                    color: AppColors.redTask),
+                title: const Text('Видалити повністю всю серію (скрізь)',
+                    style: TextStyle(color: AppColors.redTask, fontWeight: FontWeight.bold)),
+                subtitle: const Text('Видаляє завдання з усіх днів (минулих і майбутніх)',
+                    style: TextStyle(color: AppColors.textSecondary, fontSize: 11)),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final repo = ref.read(taskRepositoryProvider);
+                  await repo.deleteTask(task.id);
+                  await repo.deleteEntireGreenTaskSeries(task.groupId!, taskTitle: task.title);
+                },
+              ),
+            ] else
+              ListTile(
+                leading: const Icon(Icons.delete_rounded,
+                    color: AppColors.redTask),
+                title: const Text('Видалити',
+                    style: TextStyle(color: AppColors.redTask)),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final repo = ref.read(taskRepositoryProvider);
+                  await repo.deleteTask(task.id);
+                },
+              ),
           ],
         ),
       ),
@@ -617,6 +815,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
   String? _reminderTime;
   bool _isIncome = false;
   String? _selectedTag;
+  Map<String, int> _selectedTargetPoints = {};
 
   @override
   void initState() {
@@ -630,6 +829,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
       _selectedTag = t.tag;
       _selectedType = t.type;
       _reminderTime = t.reminderTime;
+      _selectedTargetPoints = Map<String, int>.from(t.targetPoints);
       if (t.recurrence != null) {
         _recurrence = t.recurrence!.frequency;
         if (t.recurrence!.daysOfWeek != null) {
@@ -694,7 +894,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
                   Text(_isIncome ? 'Прибуток (Дохід)' : 'Витрата', style: const TextStyle(color: AppColors.textPrimary, fontSize: 16)),
                   Switch(
                     value: _isIncome,
-                    activeColor: AppColors.greenTask,
+                    activeThumbColor: AppColors.accent,
                     inactiveThumbColor: AppColors.redTask,
                     inactiveTrackColor: AppColors.redTask.withAlpha(50),
                     onChanged: (val) => setState(() {
@@ -728,7 +928,7 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
                   }
 
                   return DropdownButtonFormField<String>(
-                    value: _selectedTag,
+                    initialValue: _selectedTag,
                     dropdownColor: AppColors.surface,
                     style: const TextStyle(color: AppColors.textPrimary),
                     decoration: const InputDecoration(
@@ -748,6 +948,10 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
               const SizedBox(height: 16),
               _buildRecurrenceSelector(),
             ],
+            if (_selectedType == TaskType.green || _selectedType == TaskType.blue) ...[
+              const SizedBox(height: 16),
+              _buildTargetsBindingSection(),
+            ],
             const SizedBox(height: 16),
             _buildReminderSelector(),
             const SizedBox(height: 20),
@@ -757,25 +961,268 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
               child: ElevatedButton(
                 onPressed: _isLoading ? null : _saveTask,
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.greenTask,
+                  backgroundColor: AppColors.accent,
+                  foregroundColor: Colors.black,
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12)),
+                      borderRadius: BorderRadius.circular(10)),
                 ),
                 child: _isLoading
                     ? const SizedBox(
                         height: 20,
                         width: 20,
                         child: CircularProgressIndicator(
-                            color: Colors.white, strokeWidth: 2))
+                            color: Colors.black, strokeWidth: 2))
                     : Text(widget.taskToEdit != null ? 'Зберегти' : 'Створити',
                         style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
-                            color: Colors.white)),
+                            color: Colors.black)),
               ),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildTargetsBindingSection() {
+    final targetsAsync = ref.watch(targetsStreamProvider);
+    final activeTargets = (targetsAsync.valueOrNull ?? const [])
+        .where((t) => !t.isCompleted)
+        .toList();
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.track_changes_rounded,
+                  color: AppColors.accent, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'ПРИВ’ЯЗКА ДО ТАРГЕТІВ (ОЧКИ TP)',
+                  style: GoogleFonts.chakraPetch(
+                    color: AppColors.accent,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Оберіть таргети та скільки очок додавати за виконання (або списувати при пропуску).',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 11),
+          ),
+          const SizedBox(height: 10),
+          if (activeTargets.isEmpty)
+            const Text(
+              'Немає активних таргетів. Створіть їх у вкладці «Таргет»!',
+              style: TextStyle(color: AppColors.textDisabled, fontSize: 12),
+            )
+          else
+            ...activeTargets.map((target) {
+              final isBound = _selectedTargetPoints.containsKey(target.id);
+              final currentPts = _selectedTargetPoints[target.id] ?? 20;
+              final tColor = Color(target.colorValue);
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: isBound
+                      ? tColor.withAlpha(20)
+                      : AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: isBound ? tColor : AppColors.border,
+                    width: isBound ? 1.4 : 1.0,
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              if (isBound) {
+                                _selectedTargetPoints.remove(target.id);
+                              } else {
+                                _selectedTargetPoints[target.id] = 20;
+                              }
+                            });
+                          },
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  color:
+                                      isBound ? tColor : Colors.transparent,
+                                  borderRadius: BorderRadius.circular(4),
+                                  border: Border.all(
+                                    color: isBound
+                                        ? tColor
+                                        : AppColors.textSecondary,
+                                    width: 1.5,
+                                  ),
+                                ),
+                                child: isBound
+                                    ? const Icon(Icons.check_rounded,
+                                        size: 14, color: Colors.black)
+                                    : null,
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                          ),
+                        ),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                if (isBound) {
+                                  _selectedTargetPoints.remove(target.id);
+                                } else {
+                                  _selectedTargetPoints[target.id] = 20;
+                                }
+                              });
+                            },
+                            child: Text(
+                              '${target.title} (LVL ${target.currentLevel}/${target.targetLevel})',
+                              style: TextStyle(
+                                color: isBound
+                                    ? AppColors.textPrimary
+                                    : AppColors.textSecondary,
+                                fontSize: 13,
+                                fontWeight: isBound
+                                    ? FontWeight.bold
+                                    : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        ),
+                        if (isBound)
+                          InkWell(
+                            onTap: () =>
+                                _promptCustomTargetPoints(target.id, currentPts),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(
+                                color: tColor.withAlpha(40),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '+$currentPts TP ✎',
+                                style: GoogleFonts.chakraPetch(
+                                  color: tColor,
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    if (isBound) ...[
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: [10, 20, 30, 50, 100].map((preset) {
+                          final selectedPreset = currentPts == preset;
+                          return GestureDetector(
+                            onTap: () {
+                              setState(() {
+                                _selectedTargetPoints[target.id] = preset;
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: selectedPreset
+                                    ? tColor
+                                    : AppColors.surfaceVariant,
+                                borderRadius: BorderRadius.circular(6),
+                                border: Border.all(
+                                  color: selectedPreset
+                                      ? tColor
+                                      : AppColors.border,
+                                ),
+                              ),
+                              child: Text(
+                                '+$preset TP',
+                                style: GoogleFonts.chakraPetch(
+                                  color: selectedPreset
+                                      ? Colors.black
+                                      : AppColors.textSecondary,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ],
+                  ],
+                ),
+              );
+            }),
+        ],
+      ),
+    );
+  }
+
+  void _promptCustomTargetPoints(String targetId, int initialPts) {
+    final ctrl = TextEditingController(text: initialPts.toString());
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text('Очки Таргета (TP)',
+            style: TextStyle(color: AppColors.textPrimary)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          style: const TextStyle(color: AppColors.textPrimary),
+          decoration: const InputDecoration(
+            labelText: 'Базові очки за виконання',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Скасувати',
+                style: TextStyle(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final val = (int.tryParse(ctrl.text) ?? initialPts).clamp(1, 10000);
+              setState(() {
+                _selectedTargetPoints[targetId] = val;
+              });
+              Navigator.pop(ctx);
+            },
+            child: const Text('Зберегти'),
+          ),
+        ],
       ),
     );
   }
@@ -976,6 +1423,9 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
       );
     }
 
+    final canBindTargets =
+        _selectedType == TaskType.green || _selectedType == TaskType.blue;
+
     final task = Task(
       id: uid,
       userId: '',
@@ -991,6 +1441,9 @@ class _AddTaskSheetState extends ConsumerState<AddTaskSheet> {
       groupId: _selectedType == TaskType.green ? (widget.taskToEdit?.groupId ?? uid) : null,
       isCompleted: widget.taskToEdit?.isCompleted ?? false,
       reminderTime: _reminderTime,
+      targetPoints: canBindTargets ? Map<String, int>.from(_selectedTargetPoints) : const {},
+      appliedTargetPoints: widget.taskToEdit?.appliedTargetPoints ?? const {},
+      targetPenaltyProcessed: widget.taskToEdit?.targetPenaltyProcessed ?? false,
     );
 
     if (widget.taskToEdit != null) {
@@ -1070,6 +1523,8 @@ class _WeekSelectorState extends ConsumerState<_WeekSelector> {
   @override
   Widget build(BuildContext context) {
     final selectedDate = ref.watch(selectedDateProvider);
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
 
     return SizedBox(
       height: 72,
@@ -1080,48 +1535,51 @@ class _WeekSelectorState extends ConsumerState<_WeekSelector> {
         itemCount: _middleIndex * 2, // 10000 days total
         itemExtent: _itemWidth, // O(1) scroll calculation for performance
         itemBuilder: (context, index) {
-          final day = DateTime.now().add(Duration(days: index - _middleIndex));
+          // Calendar arithmetic immune to daylight saving time (DST) shifts
+          final day = DateTime(today.year, today.month, today.day + (index - _middleIndex));
           final isSelected = app_date.DateUtils.isSameDay(day, selectedDate);
-          final isToday = app_date.DateUtils.isToday(day);
+          final isToday = app_date.DateUtils.isSameDay(day, today);
 
           return GestureDetector(
             onTap: () {
-              ref.read(selectedDateProvider.notifier).state = day;
+              ref.read(selectedDateProvider.notifier).state = DateTime(day.year, day.month, day.day);
             },
             child: Container(
               width: 48,
               margin: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
               decoration: BoxDecoration(
                 color: isSelected ? AppColors.accent : AppColors.surface,
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(8),
                 border: Border.all(
                   color: isToday && !isSelected
                       ? AppColors.accent
-                      : AppColors.border,
-                  width: isToday && !isSelected ? 1.5 : 1,
+                      : (isSelected ? AppColors.accent : AppColors.border),
+                  width: isToday || isSelected ? 1.8 : 1.2,
                 ),
               ),
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Text(
-                    app_date.DateUtils.formatDayShort(day),
-                    style: TextStyle(
+                    app_date.DateUtils.formatDayShort(day).toUpperCase(),
+                    style: GoogleFonts.chakraPetch(
                       color: isSelected
-                          ? Colors.white
+                          ? Colors.black
                           : AppColors.textSecondary,
                       fontSize: 10,
+                      fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                      letterSpacing: 0.5,
                     ),
                   ),
                   const SizedBox(height: 2),
                   Text(
                     '${day.day}',
-                    style: TextStyle(
+                    style: GoogleFonts.chakraPetch(
                       color: isSelected
-                          ? Colors.white
+                          ? Colors.black
                           : AppColors.textPrimary,
                       fontSize: 16,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
                     ),
                   ),
                 ],

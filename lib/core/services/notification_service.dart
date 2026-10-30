@@ -71,6 +71,17 @@ class NotificationService {
           enableVibration: true,
         ),
       );
+
+      await androidImplementation?.createNotificationChannel(
+        const AndroidNotificationChannel(
+          'life_statistics_crypto',
+          'Крипто-алерти (Take-Profit & Stop-Loss)',
+          description: 'Критичні сповіщення для фіксації прибутку та захисту капіталу від стоп-лосу',
+          importance: Importance.max,
+          playSound: true,
+          enableVibration: true,
+        ),
+      );
     }
 
     _isInitialized = true;
@@ -289,9 +300,59 @@ class NotificationService {
     }
   }
 
+  Future<void> showCryptoNotification({
+    required int id,
+    required String title,
+    required String body,
+    String? payload,
+  }) async {
+    try {
+      await _notificationsPlugin.show(
+        id,
+        title,
+        body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'life_statistics_crypto',
+            'Крипто-алерти (Take-Profit & Stop-Loss)',
+            channelDescription:
+                'Критичні сповіщення для фіксації прибутку та захисту капіталу від стоп-лосу',
+            importance: Importance.max,
+            priority: Priority.high,
+            playSound: true,
+            enableVibration: true,
+            styleInformation: BigTextStyleInformation(''),
+          ),
+        ),
+        payload: payload,
+      );
+    } catch (e) {
+      print('[NotificationService] Error showing crypto notification: $e');
+    }
+  }
+
   Future<void> cancelTaskReminder(String taskId) async {
     final id = taskId.hashCode & 0x7FFFFFFF;
     await _notificationsPlugin.cancel(id);
+  }
+
+  Future<void> cancelCryptoNotification(int id) async {
+    try {
+      await _notificationsPlugin.cancel(id);
+    } catch (_) {}
+  }
+
+  Future<void> cancelAllCryptoNotifications() async {
+    try {
+      for (final offset in [1001, 2002, 3003, 4004, 5005, 6006]) {
+        for (final sym in ['BTC', 'ETH', 'SOL', 'BNB', 'XRP', 'DOGE', 'ADA', 'AVAX', 'DOT', 'NEAR', 'SUI', 'LINK', 'TON']) {
+          final id = (sym.hashCode ^ offset) & 0x7FFFFFFF;
+          await _notificationsPlugin.cancel(id);
+        }
+      }
+    } catch (e) {
+      print('[NotificationService] Error cancelling crypto notifications: $e');
+    }
   }
   
   Future<void> cancelAllNotifications() async {

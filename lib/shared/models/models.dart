@@ -1,10 +1,47 @@
 export 'user_settings.dart';
 export 'daily_macros.dart';
+export 'target_model.dart';
 // Task type enum
 enum TaskType { green, blue, red, yellow, finance }
 
 // Recurrence frequency
 enum RecurrenceFrequency { daily, weekly, custom }
+
+// Helper for safe DateTime conversion from Firestore (Timestamp, DateTime, String, int, or null)
+DateTime _parseDateTime(dynamic val, [DateTime? fallback]) {
+  if (val == null) return fallback ?? DateTime.now();
+  if (val is DateTime) return val;
+  try {
+    if (val.runtimeType.toString() == 'Timestamp' || val.runtimeType.toString() == '_JsonTimestamp') {
+      return (val as dynamic).toDate();
+    }
+    final toDateMethod = (val as dynamic).toDate;
+    if (toDateMethod != null) {
+      return (val as dynamic).toDate();
+    }
+  } catch (_) {}
+  if (val is String) {
+    final parsed = DateTime.tryParse(val);
+    if (parsed != null) return parsed;
+  }
+  if (val is int) {
+    return DateTime.fromMillisecondsSinceEpoch(val);
+  }
+  return fallback ?? DateTime.now();
+}
+
+Map<String, int> _parseIntMap(dynamic raw) {
+  if (raw == null || raw is! Map) return const {};
+  final result = <String, int>{};
+  raw.forEach((key, value) {
+    final k = key?.toString();
+    final v = (value is num) ? value.toInt() : int.tryParse(value?.toString() ?? '');
+    if (k != null && k.isNotEmpty && v != null) {
+      result[k] = v;
+    }
+  });
+  return result;
+}
 
 // Task model
 class Task {
@@ -22,6 +59,9 @@ class Task {
   final String? groupId; // for green tasks versioning
   final String? reminderTime; // Format: "HH:mm"
   final String? tag;
+  final Map<String, int> targetPoints; // targetId -> base points
+  final Map<String, int> appliedTargetPoints; // targetId -> actually awarded/penalized points
+  final bool targetPenaltyProcessed;
 
   Task({
     required this.id,
@@ -38,6 +78,9 @@ class Task {
     this.groupId,
     this.reminderTime,
     this.tag,
+    this.targetPoints = const {},
+    this.appliedTargetPoints = const {},
+    this.targetPenaltyProcessed = false,
   });
 
   bool get hasCheckbox => type == TaskType.green || type == TaskType.blue;
@@ -52,17 +95,20 @@ class Task {
         orElse: () => TaskType.blue,
       ),
       isCompleted: map['isCompleted'] ?? false,
-      date: (map['date'] as dynamic).toDate(),
-      timeSpentMinutes: map['timeSpentMinutes'],
+      date: _parseDateTime(map['date']),
+      timeSpentMinutes: (map['timeSpentMinutes'] as num?)?.toInt(),
       moneySpent: (map['moneySpent'] as num?)?.toDouble(),
       moneyEarned: (map['moneyEarned'] as num?)?.toDouble(),
-      recurrence: map['recurrence'] != null
-          ? RecurrenceRule.fromMap(map['recurrence'])
+      recurrence: map['recurrence'] != null && map['recurrence'] is Map<String, dynamic>
+          ? RecurrenceRule.fromMap(map['recurrence'] as Map<String, dynamic>)
           : null,
-      createdAt: (map['createdAt'] as dynamic).toDate(),
+      createdAt: _parseDateTime(map['createdAt']),
       groupId: map['groupId'],
       reminderTime: map['reminderTime'],
       tag: map['tag'],
+      targetPoints: _parseIntMap(map['targetPoints']),
+      appliedTargetPoints: _parseIntMap(map['appliedTargetPoints']),
+      targetPenaltyProcessed: map['targetPenaltyProcessed'] as bool? ?? false,
     );
   }
 
@@ -81,6 +127,9 @@ class Task {
       'groupId': groupId,
       'reminderTime': reminderTime,
       'tag': tag,
+      'targetPoints': targetPoints,
+      'appliedTargetPoints': appliedTargetPoints,
+      'targetPenaltyProcessed': targetPenaltyProcessed,
     };
   }
 
@@ -99,6 +148,9 @@ class Task {
     String? groupId,
     String? reminderTime,
     String? tag,
+    Map<String, int>? targetPoints,
+    Map<String, int>? appliedTargetPoints,
+    bool? targetPenaltyProcessed,
   }) {
     return Task(
       id: id ?? this.id,
@@ -115,6 +167,9 @@ class Task {
       groupId: groupId ?? this.groupId,
       reminderTime: reminderTime ?? this.reminderTime,
       tag: tag ?? this.tag,
+      targetPoints: targetPoints ?? this.targetPoints,
+      appliedTargetPoints: appliedTargetPoints ?? this.appliedTargetPoints,
+      targetPenaltyProcessed: targetPenaltyProcessed ?? this.targetPenaltyProcessed,
     );
   }
 }
@@ -139,8 +194,8 @@ class RecurrenceRule {
         orElse: () => RecurrenceFrequency.daily,
       ),
       daysOfWeek: (map['daysOfWeek'] as List?)?.cast<int>(),
-      startDate: (map['startDate'] as dynamic).toDate(),
-      endDate: map['endDate'] != null ? (map['endDate'] as dynamic).toDate() : null,
+      startDate: _parseDateTime(map['startDate']),
+      endDate: map['endDate'] != null ? _parseDateTime(map['endDate']) : null,
     );
   }
 
@@ -177,11 +232,11 @@ class MindsetEntry {
     return MindsetEntry(
       id: id,
       userId: map['userId'] ?? '',
-      date: (map['date'] as dynamic).toDate(),
-      energy: map['energy'] ?? 3,
-      focus: map['focus'] ?? 3,
-      motivation: map['motivation'] ?? 3,
-      mood: map['mood'] ?? 3,
+      date: _parseDateTime(map['date']),
+      energy: (map['energy'] as num?)?.toInt() ?? 3,
+      focus: (map['focus'] as num?)?.toInt() ?? 3,
+      motivation: (map['motivation'] as num?)?.toInt() ?? 3,
+      mood: (map['mood'] as num?)?.toInt() ?? 3,
     );
   }
 

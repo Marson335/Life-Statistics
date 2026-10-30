@@ -1,12 +1,16 @@
 import '../../../../core/services/notification_service.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:google_fonts/google_fonts.dart';
+import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../shared/models/models.dart';
 import '../../data/settings_repository.dart';
 import '../../../tasks/data/notification_expense_service.dart';
 import '../../../tasks/presentation/screens/today_screen.dart';
+import '../../../crypto/presentation/providers/crypto_portfolio_provider.dart';
+import '../../../crypto/data/crypto_alert_service.dart';
 
 final notificationServiceProvider = Provider<NotificationService>((ref) => NotificationService());
 
@@ -56,6 +60,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   final _binanceApiSecretController = TextEditingController();
   final _solanaAddressController = TextEditingController();
   final _evmAddressController = TextEditingController();
+  final _btcAddressController = TextEditingController();
+  final _newAlertCoinController = TextEditingController();
+
+  bool _cryptoAlertsInitialized = false;
+  bool _cryptoAlertsEnabled = true;
+  bool _cryptoAlertOnTp = true;
+  bool _cryptoAlertOnTrailing = true;
+  bool _cryptoAlertOnPreStop = true;
+  bool _cryptoAlertOnHardStop = true;
+  bool _cryptoAlertOnPeak = true;
+  bool _cryptoAlertOnDcaBuy = true;
+  Set<String> _cryptoAlertCoins = {'BTC', 'ETH', 'SOL'};
 
   @override
   void dispose() {
@@ -65,13 +81,15 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     _binanceApiSecretController.dispose();
     _solanaAddressController.dispose();
     _evmAddressController.dispose();
+    _btcAddressController.dispose();
+    _newAlertCoinController.dispose();
     _ageController.dispose();
     _weightController.dispose();
     _heightController.dispose();
     super.dispose();
   }
 
-  void _calculateAndSave(UserSettings current) {
+  Future<void> _calculateAndSave(UserSettings current) async {
     final age = int.tryParse(_ageController.text) ?? current.age;
     final weight = double.tryParse(_weightController.text) ?? current.weight;
     final height = double.tryParse(_heightController.text) ?? current.height;
@@ -110,19 +128,44 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       groqApiKey: _groqKeyController.text.trim().isEmpty ? null : _groqKeyController.text.trim(),
       binanceApiKey: _binanceApiKeyController.text.trim().isEmpty ? null : _binanceApiKeyController.text.trim(),
       binanceApiSecret: _binanceApiSecretController.text.trim().isEmpty ? null : _binanceApiSecretController.text.trim(),
-      solanaAddress: _solanaAddressController.text.trim(),
-      evmAddress: _evmAddressController.text.trim(),
+      solanaAddress: _solanaAddressController.text.trim().isEmpty ? '' : _solanaAddressController.text.trim(),
+      evmAddress: _evmAddressController.text.trim().isEmpty ? '' : _evmAddressController.text.trim(),
+      btcAddress: _btcAddressController.text.trim().isEmpty ? '' : _btcAddressController.text.trim(),
+      cryptoAlertsEnabled: _cryptoAlertsEnabled,
+      cryptoAlertCoins: _cryptoAlertCoins.toList(),
+      cryptoAlertOnTp: _cryptoAlertOnTp,
+      cryptoAlertOnTrailing: _cryptoAlertOnTrailing,
+      cryptoAlertOnPreStop: _cryptoAlertOnPreStop,
+      cryptoAlertOnHardStop: _cryptoAlertOnHardStop,
+      cryptoAlertOnPeak: _cryptoAlertOnPeak,
+      cryptoAlertOnDcaBuy: _cryptoAlertOnDcaBuy,
       targetCalories: targetCalories,
       targetProtein: targetProtein,
       targetFats: targetFats,
       targetCarbs: targetCarbs,
     );
 
-    ref.read(settingsRepositoryProvider).updateSettings(updated);
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Дані оновлено!'), backgroundColor: AppColors.greenTask),
+    await ref.read(settingsRepositoryProvider).updateSettings(updated);
+    await CryptoAlertService().updateSettings(
+      enabled: _cryptoAlertsEnabled,
+      coins: _cryptoAlertCoins,
+      notifyTp: _cryptoAlertOnTp,
+      notifyTrailing: _cryptoAlertOnTrailing,
+      notifyPreStop: _cryptoAlertOnPreStop,
+      notifyHardStop: _cryptoAlertOnHardStop,
+      notifyPeak: _cryptoAlertOnPeak,
+      notifyDcaBuy: _cryptoAlertOnDcaBuy,
+      currentSettings: updated,
+      settingsRepo: ref.read(settingsRepositoryProvider),
     );
+    // Автоматично перезавантажуємо криптопортфель та Web3 з новими адресами
+    await ref.read(cryptoPortfolioProvider.notifier).refreshPortfolio();
+    
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Дані оновлено! Криптопортфель синхронізовано з блокчейном.'), backgroundColor: AppColors.greenTask),
+      );
+    }
   }
 
   @override
@@ -134,34 +177,83 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text(
-          'Налаштування',
-          style: TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 22,
-            fontWeight: FontWeight.bold,
-          ),
+        title: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'ATHLETE PROFILE',
+                  style: GoogleFonts.chakraPetch(
+                    color: AppColors.accent,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.0,
+                  ),
+                ),
+                Text(
+                  'ПАРАМЕТРИ ТА ЦІЛІ',
+                  style: GoogleFonts.chakraPetch(
+                    color: AppColors.textPrimary,
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: 0.8,
+                  ),
+                ),
+              ],
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF161922),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppColors.accent.withAlpha(180), width: 1.5),
+              ),
+              child: Text(
+                'V2.4 // PRO',
+                style: GoogleFonts.chakraPetch(
+                  color: AppColors.accent,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.8,
+                ),
+              ),
+            ),
+          ],
         ),
       ),
       body: settingsAsync.when(
         data: (settings) {
           // Initialize controllers if empty
-          if (_ageController.text.isEmpty) {
-            _ageController.text = settings.age.toString();
-            _weightController.text = settings.weight.toString();
-            _heightController.text = settings.height.toString();
-            _gender = settings.gender;
-            _goal = settings.goal;
-            if (settings.geminiApiKey != null) _geminiKeyController.text = settings.geminiApiKey!;
-            if (settings.groqApiKey != null) _groqKeyController.text = settings.groqApiKey!;
-            if (settings.binanceApiKey != null) _binanceApiKeyController.text = settings.binanceApiKey!;
-            if (settings.binanceApiSecret != null) _binanceApiSecretController.text = settings.binanceApiSecret!;
-            if (settings.solanaAddress != null && settings.solanaAddress!.isNotEmpty) {
-              _solanaAddressController.text = settings.solanaAddress!;
-            }
-            if (settings.evmAddress != null && settings.evmAddress!.isNotEmpty) {
-              _evmAddressController.text = settings.evmAddress!;
-            }
+          if (_ageController.text.isEmpty) _ageController.text = settings.age.toString();
+          if (_weightController.text.isEmpty) _weightController.text = settings.weight.toString();
+          if (_heightController.text.isEmpty) _heightController.text = settings.height.toString();
+          _gender = settings.gender;
+          _goal = settings.goal;
+          if (_geminiKeyController.text.isEmpty && settings.geminiApiKey != null) _geminiKeyController.text = settings.geminiApiKey!;
+          if (_groqKeyController.text.isEmpty && settings.groqApiKey != null) _groqKeyController.text = settings.groqApiKey!;
+          if (_binanceApiKeyController.text.isEmpty && settings.binanceApiKey != null) _binanceApiKeyController.text = settings.binanceApiKey!;
+          if (_binanceApiSecretController.text.isEmpty && settings.binanceApiSecret != null) _binanceApiSecretController.text = settings.binanceApiSecret!;
+          if (_solanaAddressController.text.isEmpty && settings.solanaAddress != null && settings.solanaAddress!.isNotEmpty) {
+            _solanaAddressController.text = settings.solanaAddress!;
+          }
+          if (_evmAddressController.text.isEmpty && settings.evmAddress != null && settings.evmAddress!.isNotEmpty) {
+            _evmAddressController.text = settings.evmAddress!;
+          }
+          if (_btcAddressController.text.isEmpty && settings.btcAddress != null && settings.btcAddress!.isNotEmpty) {
+            _btcAddressController.text = settings.btcAddress!;
+          }
+          if (!_cryptoAlertsInitialized) {
+            _cryptoAlertsEnabled = settings.cryptoAlertsEnabled;
+            _cryptoAlertCoins = Set<String>.from(settings.cryptoAlertCoins);
+            _cryptoAlertOnTp = settings.cryptoAlertOnTp;
+            _cryptoAlertOnTrailing = settings.cryptoAlertOnTrailing;
+            _cryptoAlertOnPreStop = settings.cryptoAlertOnPreStop;
+            _cryptoAlertOnHardStop = settings.cryptoAlertOnHardStop;
+            _cryptoAlertOnPeak = settings.cryptoAlertOnPeak;
+            _cryptoAlertOnDcaBuy = settings.cryptoAlertOnDcaBuy;
+            _cryptoAlertsInitialized = true;
           }
 
           return ListView(
@@ -192,8 +284,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -221,7 +313,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 await notiService.requestPermissions();
                 await notiService.cancelAllNotifications();
                 final count = await notiService.rescheduleAllTaskReminders(taskRepo);
-                if (context.mounted) {
+                if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       content: Text('Всі нагадування синхронізовано! Активних: $count'),
@@ -230,11 +322,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                   );
                 }
               },
-              icon: const Icon(Icons.sync_rounded, color: Colors.white),
-              label: const Text('Синхронізувати та відновити нагадування', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+              icon: const Icon(Icons.sync_rounded, color: Colors.black),
+              label: const Text('Синхронізувати та відновити нагадування', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.accent,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                foregroundColor: Colors.black,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 padding: const EdgeInsets.symmetric(vertical: 14),
               ),
             ),
@@ -247,7 +340,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 final notiService = ref.read(notificationServiceProvider);
                 await notiService.requestPermissions();
                 await notiService.scheduleTestReminder();
-                if (context.mounted) {
+                if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(
                       content: Text('Тестове сповіщення заплановано! Воно надійде через 5 секунд.'),
@@ -274,7 +367,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
       ),
       child: Column(
         children: [
@@ -339,32 +433,24 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       ),
                       const SizedBox(width: 8),
                       ElevatedButton(
-                        onPressed: () {
+                        onPressed: () async {
                           FocusScope.of(context).unfocus();
-                          final updated = UserSettings(
-                            age: settings.age,
-                            weight: settings.weight,
-                            height: settings.height,
-                            gender: settings.gender,
-                            goal: settings.goal,
-                            targetCalories: settings.targetCalories,
-                            targetProtein: settings.targetProtein,
-                            targetFats: settings.targetFats,
-                            targetCarbs: settings.targetCarbs,
-                            expenseTags: settings.expenseTags,
-                            incomeTags: settings.incomeTags,
+                          final updated = settings.copyWith(
                             geminiApiKey: _geminiKeyController.text.trim().isEmpty ? null : _geminiKeyController.text.trim(),
                           );
-                          ref.read(settingsRepositoryProvider).updateSettings(updated);
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('API Ключ збережено!'), backgroundColor: AppColors.greenTask),
-                          );
+                          await ref.read(settingsRepositoryProvider).updateSettings(updated);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('API Ключ збережено!'), backgroundColor: AppColors.greenTask),
+                            );
+                          }
                         },
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.accent,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
-                        child: const Text('Зберегти', style: TextStyle(color: Colors.white)),
+                        child: const Text('Зберегти', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                       ),
                     ],
                   ),
@@ -380,7 +466,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
       ),
       child: Column(
         children: [
@@ -463,12 +550,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton.icon(
-                        icon: const Icon(Icons.security_rounded, size: 18),
-                        label: const Text('Надати дозвіл у налаштуваннях Android'),
+                        icon: const Icon(Icons.security_rounded, size: 18, color: Colors.black),
+                        label: const Text('Надати дозвіл у налаштуваннях Android', style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold)),
                         style: ElevatedButton.styleFrom(
                           backgroundColor: AppColors.accent,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                          foregroundColor: Colors.black,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         ),
                         onPressed: () async {
                           await NotificationExpenseService().requestPermission();
@@ -813,105 +900,193 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Widget _buildCaloriesSection(UserSettings settings) {
+    String goalText = 'ПІДТРИМКА ФОРМИ (БАЛАНС)';
+    if (settings.goal == 'lose') {
+      goalText = 'ДЕФІЦИТ (СПАЛЕННЯ ЖИРУ ТА РЕЛЬЄФ)';
+    } else if (settings.goal == 'gain') {
+      goalText = 'РЕКОМПОЗИЦІЯ (РІСТ СУХИХ М\'ЯЗІВ)';
+    }
+
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-      ),
-      child: Column(
-        children: [
-          ListTile(
-            title: const Text('Калькулятор калорій', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
-            leading: const Icon(Icons.local_fire_department_rounded, color: AppColors.accent),
-            trailing: Icon(_isCaloriesExpanded ? Icons.expand_less : Icons.expand_more, color: AppColors.textSecondary),
-            onTap: () {
-              setState(() => _isCaloriesExpanded = !_isCaloriesExpanded);
-            },
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.accent.withAlpha(180), width: 1.5),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(90),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
           ),
-          if (_isCaloriesExpanded)
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Expanded(child: _buildTextField('Вік (роки)', _ageController, TextInputType.number)),
-                      const SizedBox(width: 16),
-                      Expanded(child: _buildTextField('Вага (кг)', _weightController, const TextInputType.numberWithOptions(decimal: true))),
-                      const SizedBox(width: 16),
-                      Expanded(child: _buildTextField('Зріст (см)', _heightController, const TextInputType.numberWithOptions(decimal: true))),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  const Text('Стать', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: RadioListTile<String>(
-                          title: const Text('Чол', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-                          value: 'male',
-                          groupValue: _gender,
-                          activeColor: AppColors.accent,
-                          contentPadding: EdgeInsets.zero,
-                          onChanged: (v) => setState(() => _gender = v!),
-                        ),
-                      ),
-                      Expanded(
-                        child: RadioListTile<String>(
-                          title: const Text('Жін', style: TextStyle(color: AppColors.textPrimary, fontSize: 14)),
-                          value: 'female',
-                          groupValue: _gender,
-                          activeColor: AppColors.accent,
-                          contentPadding: EdgeInsets.zero,
-                          onChanged: (v) => setState(() => _gender = v!),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  const Text('Мета', style: TextStyle(color: AppColors.textSecondary, fontSize: 12)),
-                  DropdownButtonFormField<String>(
-                    value: _goal,
-                    dropdownColor: AppColors.surface,
-                    style: const TextStyle(color: AppColors.textPrimary),
-                    decoration: const InputDecoration(
-                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
-                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'lose', child: Text('Схуднення')),
-                      DropdownMenuItem(value: 'maintain', child: Text('Підтримка')),
-                      DropdownMenuItem(value: 'gain', child: Text('Набір маси')),
-                    ],
-                    onChanged: (v) => setState(() => _goal = v!),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton(
-                      onPressed: () => _calculateAndSave(settings),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.accent,
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      ),
-                      child: const Text('Розрахувати та Зберегти', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Divider(color: AppColors.border),
-                  const SizedBox(height: 16),
-                  const Text('Твоя щоденна норма:', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 12),
-                  _buildMacroRow('Калорії', '${settings.targetCalories} ккал', AppColors.accent),
-                  _buildMacroRow('Білки', '${settings.targetProtein} г', AppColors.blueTask),
-                  _buildMacroRow('Жири', '${settings.targetFats} г', AppColors.yellowTask),
-                  _buildMacroRow('Вуглеводи', '${settings.targetCarbs} г', AppColors.greenTask),
-                ],
-              ),
-            )
         ],
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(11),
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Container(width: 4, color: AppColors.accent),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'ФІЗИЧНІ ДАНІ СПОРТСМЕНА',
+                            style: GoogleFonts.chakraPetch(
+                              color: AppColors.accent,
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.8,
+                            ),
+                          ),
+                          InkWell(
+                            onTap: () => setState(() => _isCaloriesExpanded = !_isCaloriesExpanded),
+                            child: Row(
+                              children: [
+                                Text(
+                                  _isCaloriesExpanded ? 'ЗГОРНУТИ' : 'РЕДАГУВАТИ',
+                                  style: GoogleFonts.chakraPetch(
+                                    color: AppColors.textSecondary,
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                Icon(
+                                  _isCaloriesExpanded ? Icons.expand_less : Icons.expand_more,
+                                  color: AppColors.textSecondary,
+                                  size: 18,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Text(
+                        'ВІК: ${settings.age} Р  •  ВАГА: ${settings.weight} КГ  •  ЗРІСТ: ${settings.height} СМ',
+                        style: GoogleFonts.chakraPetch(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'ЦІЛЬ: $goalText',
+                        style: GoogleFonts.chakraPetch(
+                          color: AppColors.accent,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      const Divider(color: AppColors.border, height: 1),
+                      const SizedBox(height: 10),
+                      Text(
+                        'РОЗРАХОВАНА НОРМА ТІЛА:',
+                        style: GoogleFonts.chakraPetch(
+                          color: const Color(0xFFA0AAB9),
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${settings.targetCalories} ККАЛ  |  ${settings.targetProtein}г БІЛКА  |  ${settings.targetFats}г ЖИРІВ  |  ${settings.targetCarbs}г ВУГЛЕВОДІВ',
+                        style: GoogleFonts.chakraPetch(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                      if (_isCaloriesExpanded) ...[
+                        const SizedBox(height: 16),
+                        const Divider(color: AppColors.border, height: 1),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(child: _buildTextField('Вік (роки)', _ageController, TextInputType.number)),
+                            const SizedBox(width: 16),
+                            Expanded(child: _buildTextField('Вага (кг)', _weightController, const TextInputType.numberWithOptions(decimal: true))),
+                            const SizedBox(width: 16),
+                            Expanded(child: _buildTextField('Зріст (см)', _heightController, const TextInputType.numberWithOptions(decimal: true))),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        Text('Стать', style: GoogleFonts.chakraPetch(color: AppColors.textSecondary, fontSize: 12)),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: RadioListTile<String>(
+                                title: Text('Чол', style: GoogleFonts.chakraPetch(color: AppColors.textPrimary, fontSize: 13)),
+                                value: 'male',
+                                groupValue: _gender,
+                                activeColor: AppColors.accent,
+                                contentPadding: EdgeInsets.zero,
+                                onChanged: (v) => setState(() => _gender = v!),
+                              ),
+                            ),
+                            Expanded(
+                              child: RadioListTile<String>(
+                                title: Text('Жін', style: GoogleFonts.chakraPetch(color: AppColors.textPrimary, fontSize: 13)),
+                                value: 'female',
+                                groupValue: _gender,
+                                activeColor: AppColors.accent,
+                                contentPadding: EdgeInsets.zero,
+                                onChanged: (v) => setState(() => _gender = v!),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Text('Мета тренувань', style: GoogleFonts.chakraPetch(color: AppColors.textSecondary, fontSize: 12)),
+                        DropdownButtonFormField<String>(
+                          value: _goal,
+                          dropdownColor: AppColors.surface,
+                          style: GoogleFonts.chakraPetch(color: AppColors.textPrimary, fontSize: 13),
+                          decoration: const InputDecoration(
+                            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                          ),
+                          items: const [
+                            DropdownMenuItem(value: 'lose', child: Text('Схуднення (дефіцит)')),
+                            DropdownMenuItem(value: 'maintain', child: Text('Підтримка форми')),
+                            DropdownMenuItem(value: 'gain', child: Text('Набір маси (рекомпозиція)')),
+                          ],
+                          onChanged: (v) => setState(() => _goal = v!),
+                        ),
+                        const SizedBox(height: 20),
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton(
+                            onPressed: () => _calculateAndSave(settings),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.accent,
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                            ),
+                            child: Text(
+                              'РОЗРАХУВАТИ ТА ЗБЕРЕГТИ',
+                              style: GoogleFonts.chakraPetch(color: Colors.black, fontWeight: FontWeight.w900, letterSpacing: 0.6),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -930,31 +1105,476 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     );
   }
 
-  Widget _buildMacroRow(String label, String value, Color color) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
+  Widget _buildCryptoAlertsSubSection(UserSettings settings) {
+    final portfolioState = ref.watch(cryptoPortfolioProvider);
+    final allHoldings = portfolioState.overview.holdings;
+    final allDca = portfolioState.groupedDcaCoins;
+
+    final Set<String> candidates = {'BTC', 'ETH', 'SOL'};
+    for (final h in allHoldings) {
+      final sym = h.symbol.toUpperCase();
+      if (!const {'USDT', 'USDC', 'FDUSD', 'DAI', 'BUSD'}.contains(sym)) {
+        candidates.add(sym);
+      }
+    }
+    for (final d in allDca) {
+      final sym = d.symbol.toUpperCase();
+      if (!const {'USDT', 'USDC', 'FDUSD', 'DAI', 'BUSD'}.contains(sym)) {
+        candidates.add(sym);
+      }
+    }
+    for (final c in _cryptoAlertCoins) {
+      final sym = c.toUpperCase();
+      if (!const {'USDT', 'USDC', 'FDUSD', 'DAI', 'BUSD'}.contains(sym)) {
+        candidates.add(sym);
+      }
+    }
+
+    final sortedCoins = candidates.toList()
+      ..sort((a, b) {
+        final aMon = _cryptoAlertCoins.contains(a);
+        final bMon = _cryptoAlertCoins.contains(b);
+        if (aMon != bMon) return aMon ? -1 : 1;
+        return a.compareTo(b);
+      });
+
+    final alertTargets = CryptoAlertService().targets;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(Icons.notifications_active_rounded,
+                color: AppColors.accent, size: 18),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                '4. Фонові сповіщення та алерти (Take-Profit / Stop-Loss):',
+                style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Додаток моніторить ціни монет навіть коли він згорнутий або закритий. '
+          'При досягненні Take-Profit, виснаженні піку, пробитті трейлінг-стопу чи небезпечної зони Stop-Loss '
+          'ви отримаєте системне сповіщення з точною рекомендацією щодо закриття позиції.',
+          style: TextStyle(color: AppColors.textSecondary, fontSize: 12, height: 1.35),
+        ),
+        const SizedBox(height: 12),
+
+        // Головний перемикач фонового моніторингу
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: _cryptoAlertsEnabled
+                ? AppColors.accent.withValues(alpha: 0.10)
+                : AppColors.surfaceVariant,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: _cryptoAlertsEnabled
+                  ? AppColors.accent.withValues(alpha: 0.4)
+                  : AppColors.border,
+            ),
+          ),
+          child: Row(
             children: [
-              Container(width: 8, height: 8, decoration: BoxDecoration(color: color, shape: BoxShape.circle)),
-              const SizedBox(width: 8),
-              Text(label, style: const TextStyle(color: AppColors.textSecondary)),
+              Icon(
+                _cryptoAlertsEnabled
+                    ? Icons.notifications_on_rounded
+                    : Icons.notifications_off_rounded,
+                color: _cryptoAlertsEnabled ? AppColors.accent : AppColors.textDisabled,
+                size: 22,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Фоновий моніторинг цін',
+                      style: TextStyle(
+                        color: _cryptoAlertsEnabled
+                            ? AppColors.textPrimary
+                            : AppColors.textSecondary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 13,
+                      ),
+                    ),
+                    Text(
+                      _cryptoAlertsEnabled
+                          ? 'Алерти активні для ${_cryptoAlertCoins.length} обраних монет'
+                          : 'Всі сповіщення вимкнено',
+                      style: TextStyle(
+                        color: _cryptoAlertsEnabled
+                            ? AppColors.accentLight
+                            : AppColors.textDisabled,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _cryptoAlertsEnabled,
+                activeColor: AppColors.accent,
+                onChanged: (val) {
+                  setState(() => _cryptoAlertsEnabled = val);
+                },
+              ),
             ],
           ),
-          Text(value, style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.bold)),
+        ),
+
+        if (_cryptoAlertsEnabled) ...[
+          const SizedBox(height: 14),
+          const Text(
+            'КАТЕГОРІЇ СИГНАЛІВ:',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.bold,
+              fontSize: 11,
+              letterSpacing: 0.5,
+            ),
+          ),
+          const SizedBox(height: 6),
+          _buildAlertOptionTile(
+            title: '🎯 Take-Profit 1/2/3',
+            subtitle: 'Фіксація цілей прибутку при рості',
+            value: _cryptoAlertOnTp,
+            onChanged: (v) => setState(() => _cryptoAlertOnTp = v),
+          ),
+          _buildAlertOptionTile(
+            title: '💎 Зона добору за DCA (Відкуп дна)',
+            subtitle: 'Ціна біля 1-го DCA лімітного ордера або зона перепроданості (RSI < 32)',
+            value: _cryptoAlertOnDcaBuy,
+            onChanged: (v) => setState(() => _cryptoAlertOnDcaBuy = v),
+          ),
+          _buildAlertOptionTile(
+            title: '🔒 Трейлінг-стоп Chandelier',
+            subtitle: 'Захист прибутку при відкаті від 20-денного піку',
+            value: _cryptoAlertOnTrailing,
+            onChanged: (v) => setState(() => _cryptoAlertOnTrailing = v),
+          ),
+          _buildAlertOptionTile(
+            title: '🔥 Пікове виснаження (SELL PEAK)',
+            subtitle: 'Перекупленість RSI > 75 та опір Боллінджера',
+            value: _cryptoAlertOnPeak,
+            onChanged: (v) => setState(() => _cryptoAlertOnPeak = v),
+          ),
+          _buildAlertOptionTile(
+            title: '🚨 Пре-Стоп (Раннє попередження SL)',
+            subtitle: 'Ймовірність падіння >65%, рекомендація скоротити 50%',
+            value: _cryptoAlertOnPreStop,
+            onChanged: (v) => setState(() => _cryptoAlertOnPreStop = v),
+          ),
+          _buildAlertOptionTile(
+            title: '🛑 Hard Stop-Loss',
+            subtitle: 'Критичне пробиття лінії стоп-лосу позиції',
+            value: _cryptoAlertOnHardStop,
+            onChanged: (v) => setState(() => _cryptoAlertOnHardStop = v),
+          ),
+
+          const SizedBox(height: 18),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Expanded(
+                child: Text(
+                  'МОНІТОРИНГ ПО МОНЕТАХ:',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _cryptoAlertCoins.addAll(sortedCoins);
+                      });
+                    },
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Всі ON', style: TextStyle(color: AppColors.accent, fontSize: 11)),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () {
+                      setState(() {
+                        _cryptoAlertCoins.clear();
+                      });
+                    },
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    child: const Text('Всі OFF', style: TextStyle(color: AppColors.redTask, fontSize: 11)),
+                  ),
+                ],
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Натискайте перемикач навпроти монети. Сповіщення надходитимуть виключно по тих монетах, які увімкнені.',
+            style: TextStyle(color: AppColors.textDisabled, fontSize: 11),
+          ),
+          const SizedBox(height: 10),
+
+          // Список монет з індивідуальними перемикачами
+          Container(
+            decoration: BoxDecoration(
+              color: AppColors.surfaceVariant.withValues(alpha: 0.45),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: ListView.separated(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              itemCount: sortedCoins.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(color: AppColors.border, height: 1),
+              itemBuilder: (ctx, idx) {
+                final sym = sortedCoins[idx];
+                final isMonitored = _cryptoAlertCoins.contains(sym);
+                final target = alertTargets[sym];
+
+                String subtitle = 'Монета портфеля';
+                if (target != null) {
+                  final tpStr = target.tp1 > 0 ? 'TP1: \$${_formatPriceCompact(target.tp1)}' : '';
+                  final slStr = target.stopLoss > 0 ? 'SL: \$${_formatPriceCompact(target.stopLoss)}' : '';
+                  final parts = [tpStr, slStr].where((s) => s.isNotEmpty).join(' • ');
+                  if (parts.isNotEmpty) subtitle = parts;
+                }
+
+                return ListTile(
+                  dense: true,
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+                  leading: CircleAvatar(
+                    radius: 14,
+                    backgroundColor: isMonitored
+                        ? AppColors.accent.withValues(alpha: 0.15)
+                        : AppColors.surfaceVariant,
+                    child: Text(
+                      sym.length > 3 ? sym.substring(0, 3) : sym,
+                      style: TextStyle(
+                        color: isMonitored
+                            ? AppColors.accentLight
+                            : AppColors.textDisabled,
+                        fontSize: 9.5,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  title: Text(
+                    sym,
+                    style: TextStyle(
+                      color: isMonitored
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                    ),
+                  ),
+                  subtitle: Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: AppColors.textDisabled,
+                      fontSize: 10.5,
+                    ),
+                  ),
+                  trailing: Switch(
+                    value: isMonitored,
+                    activeColor: AppColors.accent,
+                    onChanged: (val) {
+                      setState(() {
+                        if (val) {
+                          _cryptoAlertCoins.add(sym);
+                        } else {
+                          _cryptoAlertCoins.remove(sym);
+                        }
+                      });
+                      CryptoAlertService().toggleCoinMonitoring(sym, val);
+                    },
+                  ),
+                );
+              },
+            ),
+          ),
+
+          const SizedBox(height: 12),
+          // Додавання нової монети вручну
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _newAlertCoinController,
+                  textCapitalization: TextCapitalization.characters,
+                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 13),
+                  decoration: const InputDecoration(
+                    hintText: 'Додати монету (напр. AVAX, TON)',
+                    hintStyle: TextStyle(color: AppColors.textDisabled, fontSize: 12),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                    enabledBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: AppColors.border),
+                      borderRadius: BorderRadius.all(Radius.circular(8)),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderSide: BorderSide(color: AppColors.accent),
+                      borderRadius: BorderRadius.all(Radius.circular(8)),
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.surfaceVariant,
+                  foregroundColor: AppColors.accent,
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    side: const BorderSide(color: AppColors.border),
+                  ),
+                ),
+                onPressed: () {
+                  final text = _newAlertCoinController.text.trim().toUpperCase();
+                  if (text.isNotEmpty) {
+                    setState(() {
+                      _cryptoAlertCoins.add(text);
+                      _newAlertCoinController.clear();
+                    });
+                    CryptoAlertService().toggleCoinMonitoring(text, true);
+                  }
+                },
+                child: const Text('Додати', style: TextStyle(fontWeight: FontWeight.bold)),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 12),
+          // Кнопка тесту сповіщення
+          OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.accent,
+              side: BorderSide(color: AppColors.accent.withValues(alpha: 0.5)),
+              padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            ),
+            icon: const Icon(Icons.notifications_active_outlined, size: 16),
+            label: const Text(
+              '🧪 Надіслати тестовий крипто-алерт зараз',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            onPressed: () async {
+              await NotificationService().showCryptoNotification(
+                id: 777777,
+                title: '🔔 Тестове крипто-сповіщення Life Statistics',
+                body:
+                    'Фонові алерти працюють! Сповіщення про Take-Profit, виснаження піку та Stop-Loss налаштовані належним чином.',
+              );
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Тестове сповіщення відправлено у шторку телефону!'),
+                    backgroundColor: AppColors.greenTask,
+                  ),
+                );
+              }
+            },
+          ),
         ],
+      ],
+    );
+  }
+
+  Widget _buildAlertOptionTile({
+    required String title,
+    required String subtitle,
+    required bool value,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.borderLight),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(
+                      color: AppColors.textDisabled,
+                      fontSize: 10,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Switch(
+              value: value,
+              activeColor: AppColors.accent,
+              onChanged: onChanged,
+            ),
+          ],
+        ),
       ),
     );
+  }
+
+  String _formatPriceCompact(double val) {
+    if (val == 0) return '0.00';
+    final abs = val.abs();
+    final sign = val < 0 ? '-' : '';
+    if (abs >= 1000) {
+      return '$sign${NumberFormat('#,##0.00', 'en_US').format(abs)}';
+    } else if (abs >= 0.01) {
+      return '$sign${abs.toStringAsFixed(2)}';
+    } else {
+      return '$sign${abs.toStringAsFixed(4)}';
+    }
   }
 
   Widget _buildCryptoSection(UserSettings settings) {
     return Container(
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: AppColors.border),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border, width: 1.5),
       ),
       child: Column(
         children: [
@@ -1077,19 +1697,35 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                       focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
                     ),
                   ),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: _btcAddressController,
+                    style: const TextStyle(color: AppColors.textPrimary),
+                    decoration: const InputDecoration(
+                      labelText: 'Bitcoin адреса (On-chain bc1... або 1.../3...)',
+                      labelStyle: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+                      enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.border)),
+                      focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: AppColors.accent)),
+                    ),
+                  ),
+                  const SizedBox(height: 24),
+                  const Divider(color: AppColors.border, height: 1),
+                  const SizedBox(height: 18),
+                  _buildCryptoAlertsSubSection(settings),
+                  const SizedBox(height: 24),
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
                         backgroundColor: AppColors.accent,
+                        foregroundColor: Colors.black,
                         padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                       ),
-                      icon: const Icon(Icons.save_rounded, color: Colors.white, size: 18),
+                      icon: const Icon(Icons.save_rounded, color: Colors.black, size: 18),
                       label: const Text(
                         'Зберегти крипто-налаштування',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        style: TextStyle(color: Colors.black, fontWeight: FontWeight.bold),
                       ),
                       onPressed: () => _calculateAndSave(settings),
                     ),

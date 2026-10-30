@@ -21,6 +21,17 @@ class UserSettings {
   final String? binanceApiSecret;
   final String? solanaAddress;
   final String? evmAddress;
+  final String? btcAddress;
+
+  // Crypto Alerts & Notifications
+  final bool cryptoAlertsEnabled;
+  final List<String> cryptoAlertCoins;
+  final bool cryptoAlertOnTp;
+  final bool cryptoAlertOnTrailing;
+  final bool cryptoAlertOnPreStop;
+  final bool cryptoAlertOnHardStop;
+  final bool cryptoAlertOnPeak;
+  final bool cryptoAlertOnDcaBuy;
 
   UserSettings({
     required this.age,
@@ -40,6 +51,15 @@ class UserSettings {
     this.binanceApiSecret,
     this.solanaAddress,
     this.evmAddress,
+    this.btcAddress,
+    this.cryptoAlertsEnabled = true,
+    this.cryptoAlertCoins = const ['BTC', 'ETH', 'SOL'],
+    this.cryptoAlertOnTp = true,
+    this.cryptoAlertOnTrailing = true,
+    this.cryptoAlertOnPreStop = true,
+    this.cryptoAlertOnHardStop = true,
+    this.cryptoAlertOnPeak = true,
+    this.cryptoAlertOnDcaBuy = true,
   });
 
   factory UserSettings.defaultSettings() {
@@ -59,8 +79,17 @@ class UserSettings {
       groqApiKey: null,
       binanceApiKey: null,
       binanceApiSecret: null,
-      solanaAddress: '2jDw1BSMu5uJjzUHKnqHnycZ4a6P7V6coEwSRHvSJqhk',
+      solanaAddress: null,
       evmAddress: null,
+      btcAddress: null,
+      cryptoAlertsEnabled: true,
+      cryptoAlertCoins: const ['BTC', 'ETH', 'SOL'],
+      cryptoAlertOnTp: true,
+      cryptoAlertOnTrailing: true,
+      cryptoAlertOnPreStop: true,
+      cryptoAlertOnHardStop: true,
+      cryptoAlertOnPeak: true,
+      cryptoAlertOnDcaBuy: true,
     );
   }
 
@@ -81,8 +110,17 @@ class UserSettings {
       'groqApiKey': groqApiKey,
       'binanceApiKey': binanceApiKey,
       'binanceApiSecret': binanceApiSecret,
-      'solanaAddress': solanaAddress,
-      'evmAddress': evmAddress,
+      'solanaAddress': (solanaAddress != null && solanaAddress!.trim().isNotEmpty) ? solanaAddress!.trim() : null,
+      'evmAddress': (evmAddress != null && evmAddress!.trim().isNotEmpty) ? evmAddress!.trim() : null,
+      'btcAddress': (btcAddress != null && btcAddress!.trim().isNotEmpty) ? btcAddress!.trim() : null,
+      'cryptoAlertsEnabled': cryptoAlertsEnabled,
+      'cryptoAlertCoins': cryptoAlertCoins,
+      'cryptoAlertOnTp': cryptoAlertOnTp,
+      'cryptoAlertOnTrailing': cryptoAlertOnTrailing,
+      'cryptoAlertOnPreStop': cryptoAlertOnPreStop,
+      'cryptoAlertOnHardStop': cryptoAlertOnHardStop,
+      'cryptoAlertOnPeak': cryptoAlertOnPeak,
+      'cryptoAlertOnDcaBuy': cryptoAlertOnDcaBuy,
     };
   }
 
@@ -103,8 +141,17 @@ class UserSettings {
       groqApiKey: map['groqApiKey'] as String?,
       binanceApiKey: map['binanceApiKey'] as String?,
       binanceApiSecret: map['binanceApiSecret'] as String?,
-      solanaAddress: map['solanaAddress'] as String? ?? '2jDw1BSMu5uJjzUHKnqHnycZ4a6P7V6coEwSRHvSJqhk',
+      solanaAddress: map['solanaAddress'] as String?,
       evmAddress: map['evmAddress'] as String?,
+      btcAddress: map['btcAddress'] as String?,
+      cryptoAlertsEnabled: map['cryptoAlertsEnabled'] as bool? ?? true,
+      cryptoAlertCoins: (map['cryptoAlertCoins'] as List?)?.cast<String>() ?? const ['BTC', 'ETH', 'SOL'],
+      cryptoAlertOnTp: map['cryptoAlertOnTp'] as bool? ?? true,
+      cryptoAlertOnTrailing: map['cryptoAlertOnTrailing'] as bool? ?? true,
+      cryptoAlertOnPreStop: map['cryptoAlertOnPreStop'] as bool? ?? true,
+      cryptoAlertOnHardStop: map['cryptoAlertOnHardStop'] as bool? ?? true,
+      cryptoAlertOnPeak: map['cryptoAlertOnPeak'] as bool? ?? true,
+      cryptoAlertOnDcaBuy: map['cryptoAlertOnDcaBuy'] as bool? ?? true,
     );
   }
 
@@ -126,6 +173,15 @@ class UserSettings {
     String? binanceApiSecret,
     String? solanaAddress,
     String? evmAddress,
+    String? btcAddress,
+    bool? cryptoAlertsEnabled,
+    List<String>? cryptoAlertCoins,
+    bool? cryptoAlertOnTp,
+    bool? cryptoAlertOnTrailing,
+    bool? cryptoAlertOnPreStop,
+    bool? cryptoAlertOnHardStop,
+    bool? cryptoAlertOnPeak,
+    bool? cryptoAlertOnDcaBuy,
   }) {
     return UserSettings(
       age: age ?? this.age,
@@ -143,8 +199,23 @@ class UserSettings {
       groqApiKey: groqApiKey ?? this.groqApiKey,
       binanceApiKey: binanceApiKey ?? this.binanceApiKey,
       binanceApiSecret: binanceApiSecret ?? this.binanceApiSecret,
-      solanaAddress: solanaAddress ?? this.solanaAddress,
-      evmAddress: evmAddress ?? this.evmAddress,
+      solanaAddress: solanaAddress != null
+          ? (solanaAddress.trim().isEmpty ? null : solanaAddress.trim())
+          : this.solanaAddress,
+      evmAddress: evmAddress != null
+          ? (evmAddress.trim().isEmpty ? null : evmAddress.trim())
+          : this.evmAddress,
+      btcAddress: btcAddress != null
+          ? (btcAddress.trim().isEmpty ? null : btcAddress.trim())
+          : this.btcAddress,
+      cryptoAlertsEnabled: cryptoAlertsEnabled ?? this.cryptoAlertsEnabled,
+      cryptoAlertCoins: cryptoAlertCoins ?? this.cryptoAlertCoins,
+      cryptoAlertOnTp: cryptoAlertOnTp ?? this.cryptoAlertOnTp,
+      cryptoAlertOnTrailing: cryptoAlertOnTrailing ?? this.cryptoAlertOnTrailing,
+      cryptoAlertOnPreStop: cryptoAlertOnPreStop ?? this.cryptoAlertOnPreStop,
+      cryptoAlertOnHardStop: cryptoAlertOnHardStop ?? this.cryptoAlertOnHardStop,
+      cryptoAlertOnPeak: cryptoAlertOnPeak ?? this.cryptoAlertOnPeak,
+      cryptoAlertOnDcaBuy: cryptoAlertOnDcaBuy ?? this.cryptoAlertOnDcaBuy,
     );
   }
 }

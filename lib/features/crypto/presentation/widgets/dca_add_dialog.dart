@@ -188,12 +188,16 @@ class _DcaAddDialogState extends State<DcaAddDialog> {
                             child: Text('Binance Spot', maxLines: 1, overflow: TextOverflow.ellipsis),
                           ),
                           DropdownMenuItem(
-                            value: 'SOLANA',
-                            child: Text('Solana', maxLines: 1, overflow: TextOverflow.ellipsis),
+                            value: 'Web3 (Bitcoin On-chain)',
+                            child: Text('Web3 · Bitcoin On-chain', maxLines: 1, overflow: TextOverflow.ellipsis),
                           ),
                           DropdownMenuItem(
-                            value: 'EVM',
-                            child: Text('EVM / MetaMask', maxLines: 1, overflow: TextOverflow.ellipsis),
+                            value: 'Web3 (MetaMask / EVM)',
+                            child: Text('Web3 · EVM / MetaMask', maxLines: 1, overflow: TextOverflow.ellipsis),
+                          ),
+                          DropdownMenuItem(
+                            value: 'Web3 (Solana)',
+                            child: Text('Web3 · Solana', maxLines: 1, overflow: TextOverflow.ellipsis),
                           ),
                         ],
                         onChanged: (val) {

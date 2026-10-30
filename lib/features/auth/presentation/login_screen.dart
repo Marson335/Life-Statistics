@@ -27,26 +27,15 @@ class LoginScreen extends ConsumerWidget {
               // Logo / Title
               Column(
                 children: [
-                  Container(
-                    width: 80,
-                    height: 80,
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [AppColors.accent, AppColors.blueTask],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: const Icon(
-                      Icons.analytics_rounded,
-                      color: Colors.white,
-                      size: 44,
-                    ),
+                  Image.asset(
+                    'assets/images/app_logo.png',
+                    width: 96,
+                    height: 96,
+                    fit: BoxFit.contain,
                   ),
                   const SizedBox(height: 24),
                   const Text(
-                    'Life Statistics',
+                    'LifeStatistic',
                     style: TextStyle(
                       color: AppColors.textPrimary,
                       fontSize: 32,
